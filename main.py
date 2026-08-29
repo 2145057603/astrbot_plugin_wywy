@@ -68,8 +68,10 @@ class Main(Star):
         self.game_mgr.remove_game(group_id)
         logger.info(f"[无欲物语] 群 {group_id} 轮盘赌超时已自动解散。")
 
-    @filter.command("装填", "装弹")
+    @filter.command("装填")
+    @filter.command("装弹")
     async def cmd_load(self, event: AstrMessageEvent, weapon_or_count: str = "", count_str: str = ""):
+
         """装填武器开局：/装填 [左轮/大狙/加特林/火箭筒] [实弹数]"""
         group_id = self._get_group_id(event)
         if not group_id:
@@ -132,8 +134,12 @@ class Main(Star):
             )
             yield event.plain_result(reply_msg)
 
-    @filter.command("开枪", "扣动扳机", "碰", "开火")
+    @filter.command("开枪")
+    @filter.command("扣动扳机")
+    @filter.command("碰")
+    @filter.command("开火")
     async def cmd_shoot(self, event: AstrMessageEvent):
+
         """扣动扳机参与对决"""
         group_id = self._get_group_id(event)
         if not group_id:
@@ -178,8 +184,11 @@ class Main(Star):
 
             yield event.plain_result(final_msg)
 
-    @filter.command("抽能力", "逆天改命", "觉醒")
+    @filter.command("抽能力")
+    @filter.command("逆天改命")
+    @filter.command("觉醒")
     async def cmd_talent(self, event: AstrMessageEvent):
+
         """在能力大乱斗模式下抽取本局专属命格"""
         group_id = self._get_group_id(event)
         if not group_id:
@@ -235,8 +244,10 @@ class Main(Star):
         else:
             yield event.plain_result("⚠️ 模式参数不正确！请使用：【/轮盘模式 普通】 或 【/轮盘模式 能力】")
 
-    @filter.command("轮盘状态", "看枪")
+    @filter.command("轮盘状态")
+    @filter.command("看枪")
     async def cmd_status(self, event: AstrMessageEvent):
+
         """查看当前对局状态"""
         group_id = self._get_group_id(event)
         if not group_id:
@@ -266,7 +277,8 @@ class Main(Star):
         )
         yield event.plain_result(msg)
 
-    @filter.command("娱乐", "小型娱乐")
+    @filter.command("娱乐")
+    @filter.command("小型娱乐")
     async def cmd_entertainment(self, event: AstrMessageEvent):
         """查看小型娱乐中心与可用小游戏列表"""
         msg = (
@@ -288,7 +300,9 @@ class Main(Star):
         )
         yield event.plain_result(msg)
 
-    @filter.command("帮助中心", "娱乐帮助", "所有指令")
+    @filter.command("帮助中心")
+    @filter.command("娱乐帮助")
+    @filter.command("所有指令")
     async def cmd_help_center(self, event: AstrMessageEvent):
         """查看无欲物语全部指令清单"""
         msg = (
@@ -315,8 +329,10 @@ class Main(Star):
         )
         yield event.plain_result(msg)
 
-    @filter.command("轮盘帮助", "无欲物语")
+    @filter.command("轮盘帮助")
+    @filter.command("无欲物语")
     async def cmd_help(self, event: AstrMessageEvent):
+
         """查看无欲物语轮盘说明书"""
         msg = (
             "🔫 〓 无欲物语 · 军火轮盘决斗说明书 〓\n"
