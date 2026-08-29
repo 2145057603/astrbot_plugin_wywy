@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import asyncio
-from typing import Dict, Optional, Callable, Awaitable
+from typing import Any, Dict, Optional, Callable, Awaitable
+
 
 
 class GameManager:

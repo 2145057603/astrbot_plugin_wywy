@@ -26,7 +26,7 @@ except (ImportError, ValueError):
 
 
 
-@register("wuyuwuyu", "无欲物语", "多功能群聊小型娱乐综合插件，集成魔改高能军火轮盘赌、命格异能抽奖与突发战场战术道具", "1.0.0")
+@register("astrbot_plugin_wywy", "无欲物语", "多功能群聊小型娱乐综合插件，集成魔改高能军火轮盘赌、命格异能抽奖与突发战场战术道具", "1.0.0")
 class Main(Star):
     def __init__(self, context: Context, config: Dict[str, Any] = None):
         super().__init__(context)
