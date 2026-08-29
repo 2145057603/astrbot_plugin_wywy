@@ -15,7 +15,7 @@ TALENT_POOL: List[Talent] = [
     Talent(
         id="sugar_daddy",
         name="义父救我 (替死)",
-        description="中弹瞬间扑通跪地！有 60% 几率抓取上一位开枪者或随机路人代为替死禁言！",
+        description="中弹瞬间扑通跪地！有 60% 几率抓取上一位开枪者或对手代为替死禁言！",
         tag="神技",
         rarity="SSR",
         transfer_chance=0.60
@@ -37,6 +37,30 @@ TALENT_POOL: List[Talent] = [
         hp_lock=True
     ),
     Talent(
+        id="mambo_reversal",
+        name="曼波·因果逆转",
+        description="曼波魔法！遭遇实弹判定时有 45% 几率直接将实弹逆转为哑弹，化险为夷！",
+        tag="神技",
+        rarity="SR",
+        reverse_bullet_chance=0.45
+    ),
+    Talent(
+        id="fifty_fifty_kill",
+        name="五五开·强行一换一",
+        description="因果律武器！若自己中弹倒地，有 50% 几率强行拉上对手一同被禁言一换一！",
+        tag="搞怪",
+        rarity="SR",
+        fifty_fifty_kill=True
+    ),
+    Talent(
+        id="devil_gambler",
+        name="恶魔赌徒·致命双响",
+        description="心狠手辣！命中对手时实弹禁言时长额外提升 50%，并掠夺对方 50 金币！",
+        tag="策略",
+        rarity="SR",
+        opponent_extra_ban=0.50
+    ),
+    Talent(
         id="nuclear_boom",
         name="原地核爆 (自爆)",
         description="大伙一起走！如果中弹倒地，引爆全身手雷，拉上随机 1 位路人一起进小黑屋！",
@@ -53,14 +77,6 @@ TALENT_POOL: List[Talent] = [
         ban_reduction=0.50
     ),
     Talent(
-        id="mambo_xray",
-        name="曼波透视眼",
-        description="曼波曼波！开枪前机器人会私下提示你下一发究竟是安全还是杀机！",
-        tag="策略",
-        rarity="SR",
-        xray=True
-    ),
-    Talent(
         id="crazy_thursday",
         name="疯狂星期四",
         description="活着就是赚到！每次扣动空枪获得双倍金币，并触发 V 我 50 庆祝！",
@@ -75,14 +91,6 @@ TALENT_POOL: List[Talent] = [
         tag="经济",
         rarity="R",
         extortion=True
-    ),
-    Talent(
-        id="bluff_king",
-        name="五五开虚张声势",
-        description="心理战大师！开出空枪时有几率伪装成中弹惨叫，吓退下一位选手！",
-        tag="恶搞",
-        rarity="R",
-        bluff=True
     ),
     Talent(
         id="jittery_hands",
@@ -105,7 +113,6 @@ TALENT_POOL: List[Talent] = [
 
 def draw_random_talent() -> Talent:
     """抽取随机命格异能"""
-    # 权重划分：SSR (10%), SR (25%), R (40%), N (25%)
     weights = []
     for t in TALENT_POOL:
         if t.rarity == "SSR":
@@ -117,3 +124,4 @@ def draw_random_talent() -> Talent:
         else:
             weights.append(30)
     return random.choices(TALENT_POOL, weights=weights, k=1)[0]
+

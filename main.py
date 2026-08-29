@@ -11,7 +11,7 @@ try:
     from .core.config import PluginConfig
     from .core.database import Database
     from .core.game_manager import GameManager
-    from .games.roulette.models import GameMode, WeaponType
+    from .games.roulette.models import GameMode, WeaponType, ShootTarget
     from .games.roulette.weapons import get_weapon_spec, WEAPON_SPECS
     from .games.roulette.engine import RouletteSession
     from .games.roulette.texts import RouletteTexts
@@ -19,10 +19,11 @@ except (ImportError, ValueError):
     from core.config import PluginConfig
     from core.database import Database
     from core.game_manager import GameManager
-    from games.roulette.models import GameMode, WeaponType
+    from games.roulette.models import GameMode, WeaponType, ShootTarget
     from games.roulette.weapons import get_weapon_spec, WEAPON_SPECS
     from games.roulette.engine import RouletteSession
     from games.roulette.texts import RouletteTexts
+
 
 
 
@@ -246,7 +247,7 @@ class Main(Star):
             )
             yield event.plain_result(reply_msg)
 
-    async def _do_shoot(self, event: AstrMessageEvent):
+    async def _do_shoot(self, event: AstrMessageEvent, target_param: str = "", force_target_type: Optional[ShootTarget] = None):
         group_id = self._get_group_id(event)
         if not group_id:
             yield event.plain_result("⚠️ 轮盘赌仅支持在群聊中进行！")
@@ -260,6 +261,22 @@ class Main(Star):
         uid, uname = self._get_user_info(event)
         is_admin = await self._check_is_admin(event, group_id, uid)
 
+        # 解析开枪目标
+        target_type = force_target_type or ShootTarget.OPPONENT
+        target_uid = None
+        target_uname = None
+
+        param = target_param.strip()
+        if any(k in param for k in ["自己", "self", "me", "自瞄"]):
+            target_type = ShootTarget.SELF
+        elif param:
+            for comp in getattr(getattr(event, "message_obj", None), "message", []):
+                if getattr(comp, "type", "") == "At" or comp.__class__.__name__ == "At":
+                    target_uid = str(getattr(comp, "qq", "") or getattr(comp, "target", "") or "")
+            if not target_uid and param.isdigit():
+                target_uid = param
+            target_uname = param.replace("@", "").strip() or target_uid
+
         async with self.game_mgr.get_lock(group_id):
             session: Optional[RouletteSession] = self.game_mgr.get_game(group_id)
             if not session:
@@ -267,28 +284,31 @@ class Main(Star):
                 return
 
             self.game_mgr.schedule_timeout(group_id, self.plugin_config.timeout_seconds, self._handle_timeout_callback)
-            result = session.execute_shoot(uid, uname, is_admin)
+            result = session.execute_shoot(
+                user_id=uid,
+                user_name=uname,
+                is_admin=is_admin,
+                target_type=target_type,
+                target_user_id=target_uid,
+                target_user_name=target_uname
+            )
 
             for effect in result.effects:
                 if effect.is_dead and effect.ban_seconds > 0 and not effect.is_admin:
                     await self._try_ban_user(event, group_id, effect.target_id, effect.ban_seconds)
 
-            extra_notes = []
-            if result.next_bullet_peek is not None:
-                peek_desc = "💀【极度危险·实弹在膛】" if result.next_bullet_peek else "🍀【虚惊一场·下发是空弹】"
-                extra_notes.append(f"👁️ 曼波透视眼暗号：{peek_desc}")
-
             narrative_block = "\n\n".join(result.narratives)
             status_line = f"📊 膛室剩余: {result.remaining_bullets}/{result.remaining_chambers}"
 
             final_msg = f"{narrative_block}\n\n{status_line}"
-            if extra_notes:
-                final_msg += "\n" + "\n".join(extra_notes)
+            if result.extra_turn and not result.game_over:
+                final_msg += "\n🔥【命运再动】你获得了一次额外行动机会，请继续选择【/向自己开枪】或【/向对面开枪】！"
 
             if result.game_over:
                 self.game_mgr.remove_game(group_id)
 
             yield event.plain_result(final_msg)
+
 
     async def _do_talent(self, event: AstrMessageEvent):
         group_id = self._get_group_id(event)
@@ -402,13 +422,15 @@ class Main(Star):
             "📖 〓 无欲物语 · 帮助中心 〓\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "【🎮 轮盘对决指令】\n"
+            "• /向自己开枪 (或: /自瞄) —— 朝自己开枪（空弹获得额外连开机会，实弹自爆）\n"
+            "• /向对面开枪 (或: /打对面/射击) —— 瞄准对手/下家扣动扳机\n"
+            "• /开枪 —— 快捷扣动扳机（支持: /开枪 自己、/开枪 @某人）\n"
             "• /装填 [武器] [实弹数] —— 装填开局（支持：左轮/大狙/加特林/火箭筒）\n"
-            "• /开枪 (或: 碰/扣动扳机/开火) —— 扣动当前武器扳机参与对决\n"
             "• /轮盘状态 (或: 看枪) —— 查看当前弹仓实弹、剩余膛室与炸弹状态\n"
             "• /轮盘帮助 (或: 无欲物语) —— 查看轮盘武器特效与机制详解\n"
             "\n"
             "【🌟 异能命格指令】\n"
-            "• /抽能力 (或: 逆天改命/觉醒) —— 在能力模式下抽取专属神技命格\n"
+            "• /抽能力 (或: 逆天改命/觉醒) —— 抽取【曼波因果逆转】、【五五开一换一】、【恶魔双响】、【锁血】等神技\n"
             "\n"
             "【⚙️ 群独立管理员指令】\n"
             "• /群管理 (或: /群配置) —— 查看本群当前生效的全部独立参数\n"
@@ -425,6 +447,7 @@ class Main(Star):
             "━━━━━━━━━━━━━━━━━━━━"
         )
         yield event.plain_result(msg)
+
 
 
     async def _do_help(self, event: AstrMessageEvent):
@@ -565,24 +588,60 @@ class Main(Star):
             yield r
 
     @filter.command("开枪")
-    async def cmd_shoot(self, event: AstrMessageEvent):
-        async for r in self._do_shoot(event):
+    async def cmd_shoot(self, event: AstrMessageEvent, target_param: str = ""):
+        async for r in self._do_shoot(event, target_param):
             yield r
 
     @filter.command("扣动扳机")
-    async def cmd_shoot_alias1(self, event: AstrMessageEvent):
-        async for r in self._do_shoot(event):
+    async def cmd_shoot_alias1(self, event: AstrMessageEvent, target_param: str = ""):
+        async for r in self._do_shoot(event, target_param):
             yield r
 
     @filter.command("碰")
-    async def cmd_shoot_alias2(self, event: AstrMessageEvent):
-        async for r in self._do_shoot(event):
+    async def cmd_shoot_alias2(self, event: AstrMessageEvent, target_param: str = ""):
+        async for r in self._do_shoot(event, target_param):
             yield r
 
     @filter.command("开火")
-    async def cmd_shoot_alias3(self, event: AstrMessageEvent):
-        async for r in self._do_shoot(event):
+    async def cmd_shoot_alias3(self, event: AstrMessageEvent, target_param: str = ""):
+        async for r in self._do_shoot(event, target_param):
             yield r
+
+    @filter.command("向自己开枪")
+    async def cmd_shoot_self(self, event: AstrMessageEvent):
+        async for r in self._do_shoot(event, force_target_type=ShootTarget.SELF):
+            yield r
+
+    @filter.command("自瞄")
+    async def cmd_shoot_self_alias1(self, event: AstrMessageEvent):
+        async for r in self._do_shoot(event, force_target_type=ShootTarget.SELF):
+            yield r
+
+    @filter.command("打自己")
+    async def cmd_shoot_self_alias2(self, event: AstrMessageEvent):
+        async for r in self._do_shoot(event, force_target_type=ShootTarget.SELF):
+            yield r
+
+    @filter.command("自开枪")
+    async def cmd_shoot_self_alias3(self, event: AstrMessageEvent):
+        async for r in self._do_shoot(event, force_target_type=ShootTarget.SELF):
+            yield r
+
+    @filter.command("向对面开枪")
+    async def cmd_shoot_opponent(self, event: AstrMessageEvent, target_param: str = ""):
+        async for r in self._do_shoot(event, target_param, force_target_type=ShootTarget.OPPONENT):
+            yield r
+
+    @filter.command("打对面")
+    async def cmd_shoot_opponent_alias1(self, event: AstrMessageEvent, target_param: str = ""):
+        async for r in self._do_shoot(event, target_param, force_target_type=ShootTarget.OPPONENT):
+            yield r
+
+    @filter.command("射击")
+    async def cmd_shoot_opponent_alias2(self, event: AstrMessageEvent, target_param: str = ""):
+        async for r in self._do_shoot(event, target_param, force_target_type=ShootTarget.OPPONENT):
+            yield r
+
 
     @filter.command("抽能力")
     async def cmd_talent(self, event: AstrMessageEvent):

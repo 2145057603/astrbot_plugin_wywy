@@ -16,6 +16,11 @@ class GameMode(str, Enum):
     TALENT = "talent"    # 能力大乱斗模式（命格抽取）
 
 
+class ShootTarget(str, Enum):
+    SELF = "self"        # 朝自己扣动扳机（空弹获得额外连开一枪机会，实弹自爆）
+    OPPONENT = "opponent"# 朝对面扣动扳机（实弹击倒对手，空弹换人）
+
+
 class TacticalItemType(str, Enum):
     STICKY_BOMB = "粘性炸弹"
     SMOKE_GRENADE = "战术烟雾弹"
@@ -34,12 +39,13 @@ class Talent:
     parry_chance: float = 0.0
     transfer_chance: float = 0.0
     suicide_aoe: bool = False
-    xray: bool = False
-    bluff: bool = False
     double_shot_chance: float = 0.0
     coin_multiplier: float = 1.0
     extortion: bool = False
     hp_lock: bool = False
+    fifty_fifty_kill: bool = False       # 五五开·强行一换一 (50%拉人同归于尽)
+    reverse_bullet_chance: float = 0.0  # 曼波·因果逆转 (将实弹逆转为哑弹)
+    opponent_extra_ban: float = 0.0     # 恶魔赌徒·致命双响 (命中对手禁言+50%)
 
 
 @dataclass
@@ -77,7 +83,8 @@ class ShootResult:
     game_over: bool
     remaining_bullets: int
     remaining_chambers: int
+    extra_turn: bool = False             # 恶魔轮盘：自瞄空弹获得额外一回合开火权
     effects: List[ShootEffectResult] = field(default_factory=list)
     narratives: List[str] = field(default_factory=list)
     tactical_item_event: Optional[str] = None
-    next_bullet_peek: Optional[bool] = None  # 透视能力返回
+

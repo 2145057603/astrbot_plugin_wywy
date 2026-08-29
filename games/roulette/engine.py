@@ -6,6 +6,7 @@ from typing import List, Dict, Optional, Tuple, Set
 from .models import (
     WeaponType,
     GameMode,
+    ShootTarget,
     TacticalItemType,
     Talent,
     StickyBombState,
@@ -132,12 +133,30 @@ class RouletteSession:
         self,
         user_id: str,
         user_name: str,
-        is_admin: bool = False
+        is_admin: bool = False,
+        target_type: ShootTarget = ShootTarget.OPPONENT,
+        target_user_id: Optional[str] = None,
+        target_user_name: Optional[str] = None
     ) -> ShootResult:
-        """执行开枪扣动扳机流程"""
+        """执行开枪扣动扳机流程（支持向自己开枪自瞄再动 / 向对面决斗）"""
         uid = str(user_id)
         self.register_player(uid, user_name)
-        talent = self.user_talents.get(uid)
+        shooter_talent = self.user_talents.get(uid)
+
+        # 确定目标受害者
+        if target_type == ShootTarget.SELF:
+            victim_id = uid
+            victim_name = user_name
+            victim_is_admin = is_admin
+        else:
+            if target_user_id and target_user_name:
+                victim_id = str(target_user_id)
+                victim_name = target_user_name
+                self.register_player(victim_id, victim_name)
+            else:
+                other = self._get_random_other_player([uid]) or self.last_shooter or (uid, user_name)
+                victim_id, victim_name = other
+            victim_is_admin = False  # 外部传入或在hit时判定
 
         result = ShootResult(
             user_id=uid,
@@ -148,13 +167,14 @@ class RouletteSession:
             blanks_fired=0,
             game_over=False,
             remaining_bullets=0,
-            remaining_chambers=0
+            remaining_chambers=0,
+            extra_turn=False
         )
 
         burst = self.weapon_spec.burst_count
-        if talent and talent.double_shot_chance > 0 and random.random() < talent.double_shot_chance:
+        if shooter_talent and shooter_talent.double_shot_chance > 0 and random.random() < shooter_talent.double_shot_chance:
             burst += 1
-            result.narratives.append(f"🔫 @{user_name} 触发【手抖症候群】，手指颤抖，不小心多扣了一枪！")
+            result.narratives.append(f"🔫 【{user_name}】触发【手抖症候群】，手指颤抖，不小心多扣了一枪！")
 
         if self.weapon_spec.type == WeaponType.GATLING:
             result.narratives.append(RouletteTexts.get_gatling_burst_text(user_name))
@@ -168,26 +188,56 @@ class RouletteSession:
             result.shots_fired += 1
 
             if not is_live:
+                # ====== 空弹判定 ======
                 result.blanks_fired += 1
-                blank_text = RouletteTexts.get_blank_text(user_name)
-                result.narratives.append(blank_text)
-
-                if talent:
-                    if talent.coin_multiplier > 1.0:
-                        Database.get_instance().record_user_action(uid, survive=True, coins_delta=50, score_delta=10)
-                        trig = RouletteTexts.get_talent_trigger_text("crazy_thursday", user_name)
-                        if trig:
-                            result.narratives.append(trig)
-                    elif talent.bluff and random.random() < 0.40:
-                        trig = RouletteTexts.get_talent_trigger_text("bluff_king", user_name)
-                        if trig:
-                            result.narratives.append(trig)
+                if target_type == ShootTarget.SELF:
+                    # 恶魔轮盘核心：朝自己开枪空弹，获得额外一回合再动开火权！
+                    result.extra_turn = True
+                    self.user_extra_turn = uid
+                    self_text = RouletteTexts.get_self_blank_text(user_name)
+                    result.narratives.append(self_text)
+                else:
+                    if victim_id == uid:
+                        blank_text = RouletteTexts.get_blank_text(user_name)
                     else:
-                        Database.get_instance().record_user_action(uid, survive=True, coins_delta=20, score_delta=5)
+                        blank_text = f"🎲 咔哒！【{user_name}】瞄准【{victim_name}】扣动扳机——击发击空！【{victim_name}】逃过一劫！"
+                    result.narratives.append(blank_text)
+
+                # 经济加成
+                if shooter_talent and shooter_talent.coin_multiplier > 1.0:
+                    Database.get_instance().record_user_action(uid, survive=True, coins_delta=50, score_delta=10)
+                    trig = RouletteTexts.get_talent_trigger_text("crazy_thursday", user_name)
+                    if trig:
+                        result.narratives.append(trig)
                 else:
                     Database.get_instance().record_user_action(uid, survive=True, coins_delta=20, score_delta=5)
+
             else:
-                self._handle_live_hit(uid, user_name, talent, is_admin, result)
+                # ====== 实弹命中判定 ======
+                # 检查曼波·因果逆转
+                victim_talent = self.user_talents.get(victim_id)
+                active_talent = shooter_talent if target_type == ShootTarget.SELF else victim_talent
+                if active_talent and active_talent.reverse_bullet_chance > 0 and random.random() < active_talent.reverse_bullet_chance:
+                    result.blanks_fired += 1
+                    if target_type == ShootTarget.SELF:
+                        result.extra_turn = True
+                    trig = RouletteTexts.get_talent_trigger_text("mambo_reversal", victim_name)
+                    result.narratives.append(trig)
+                    Database.get_instance().record_user_action(victim_id, dodge=True, score_delta=20)
+                    continue
+
+                self._handle_live_hit(
+                    shooter_id=uid,
+                    shooter_name=user_name,
+                    victim_id=victim_id,
+                    victim_name=victim_name,
+                    shooter_talent=shooter_talent,
+                    victim_talent=victim_talent,
+                    is_admin=victim_is_admin,
+                    target_type=target_type,
+                    result=result
+                )
+
         Database.get_instance().record_user_action(uid, shot=True)
 
         # 粘性炸弹传递与引爆
@@ -255,28 +305,32 @@ class RouletteSession:
 
     def _handle_live_hit(
         self,
-        uid: str,
-        user_name: str,
-        talent: Optional[Talent],
+        shooter_id: str,
+        shooter_name: str,
+        victim_id: str,
+        victim_name: str,
+        shooter_talent: Optional[Talent],
+        victim_talent: Optional[Talent],
         is_admin: bool,
+        target_type: ShootTarget,
         result: ShootResult
     ):
         result.live_hits += 1
 
         # 1. 锁血挂壁
-        if talent and talent.hp_lock and uid not in self.user_hp_lock_used:
-            self.user_hp_lock_used.add(uid)
-            trig = RouletteTexts.get_talent_trigger_text("hp_lock", user_name)
+        if victim_talent and victim_talent.hp_lock and victim_id not in self.user_hp_lock_used:
+            self.user_hp_lock_used.add(victim_id)
+            trig = RouletteTexts.get_talent_trigger_text("hp_lock", victim_name)
             result.narratives.append(trig)
-            Database.get_instance().record_user_action(uid, dodge=True, score_delta=15)
+            Database.get_instance().record_user_action(victim_id, dodge=True, score_delta=15)
             return
 
         # 2. 弹反 (Parry)
-        if talent and talent.parry_chance > 0 and random.random() < talent.parry_chance:
-            target_id = self.loader_id
-            target_name = self.loader_name
+        if victim_talent and victim_talent.parry_chance > 0 and random.random() < victim_talent.parry_chance:
+            target_id = shooter_id if shooter_id != victim_id else self.loader_id
+            target_name = shooter_name if shooter_id != victim_id else self.loader_name
             ban_dur = self._calculate_ban_duration(None)
-            trig = RouletteTexts.get_talent_trigger_text("parry_master", user_name, target_name)
+            trig = RouletteTexts.get_talent_trigger_text("parry_master", victim_name, target_name)
             result.narratives.append(trig)
             result.effects.append(ShootEffectResult(
                 target_id=target_id,
@@ -287,15 +341,15 @@ class RouletteSession:
                 is_parried=True,
                 reason="弹反反噬"
             ))
-            Database.get_instance().record_user_action(uid, dodge=True, score_delta=25)
+            Database.get_instance().record_user_action(victim_id, dodge=True, score_delta=25)
             return
 
         # 3. 替死 (义父救我)
-        if talent and talent.transfer_chance > 0 and random.random() < talent.transfer_chance:
-            sub = self._get_random_other_player([uid]) or self.last_shooter or (self.loader_id, self.loader_name)
+        if victim_talent and victim_talent.transfer_chance > 0 and random.random() < victim_talent.transfer_chance:
+            sub = self._get_random_other_player([victim_id, shooter_id]) or (shooter_id, shooter_name)
             target_id, target_name = sub
             ban_dur = self._calculate_ban_duration(None)
-            trig = RouletteTexts.get_talent_trigger_text("sugar_daddy", user_name, target_name)
+            trig = RouletteTexts.get_talent_trigger_text("sugar_daddy", victim_name, target_name)
             result.narratives.append(trig)
             result.effects.append(ShootEffectResult(
                 target_id=target_id,
@@ -306,77 +360,123 @@ class RouletteSession:
                 is_transferred=True,
                 reason="义父替死"
             ))
-            Database.get_instance().record_user_action(uid, dodge=True, score_delta=20)
+            Database.get_instance().record_user_action(victim_id, dodge=True, score_delta=20)
             return
 
         # 4. 闪避率判定
         g_cfg = self._get_group_settings()
         dodge_rate = g_cfg.dodge_rate
-        if uid in self.blinded_users:
+        if victim_id in self.blinded_users:
             dodge_rate = 0.0
-        elif talent:
-            dodge_rate += talent.dodge_bonus
-
+        elif victim_talent:
+            dodge_rate += victim_talent.dodge_bonus
 
         if dodge_rate > 0 and random.random() < dodge_rate:
-            dodge_text = RouletteTexts.get_dodge_text(user_name)
+            dodge_text = RouletteTexts.get_dodge_text(victim_name)
             result.narratives.append(dodge_text)
-            Database.get_instance().record_user_action(uid, dodge=True, score_delta=20)
+            Database.get_instance().record_user_action(victim_id, dodge=True, score_delta=20)
             return
 
-        self._apply_hit_consequences(uid, user_name, talent, is_admin, result)
+        self._apply_hit_consequences(
+            shooter_id=shooter_id,
+            shooter_name=shooter_name,
+            victim_id=victim_id,
+            victim_name=victim_name,
+            shooter_talent=shooter_talent,
+            victim_talent=victim_talent,
+            is_admin=is_admin,
+            target_type=target_type,
+            result=result
+        )
+
 
     def _apply_hit_consequences(
         self,
-        uid: str,
-        user_name: str,
-        talent: Optional[Talent],
+        shooter_id: str,
+        shooter_name: str,
+        victim_id: str,
+        victim_name: str,
+        shooter_talent: Optional[Talent],
+        victim_talent: Optional[Talent],
         is_admin: bool,
+        target_type: ShootTarget,
         result: ShootResult
     ):
-        ban_dur = self._calculate_ban_duration(talent)
+        ban_dur = self._calculate_ban_duration(victim_talent)
+
+        # 恶魔赌徒加成
+        if shooter_talent and shooter_talent.opponent_extra_ban > 0 and shooter_id != victim_id:
+            ban_dur = int(ban_dur * (1.0 + shooter_talent.opponent_extra_ban))
+            Database.get_instance().record_user_action(shooter_id, coins_delta=50)
+            Database.get_instance().record_user_action(victim_id, coins_delta=-50)
+            trig = RouletteTexts.get_talent_trigger_text("devil_gambler", shooter_name, victim_name)
+            if trig:
+                result.narratives.append(trig)
 
         if is_admin:
-            imm_text = RouletteTexts.get_admin_immunity_text(user_name)
+            imm_text = RouletteTexts.get_admin_immunity_text(victim_name)
             result.narratives.append(imm_text)
             result.effects.append(ShootEffectResult(
-                target_id=uid,
-                target_name=user_name,
+                target_id=victim_id,
+                target_name=victim_name,
                 is_admin=True,
                 ban_seconds=0,
                 is_dead=False,
                 reason="管理员特权护体"
             ))
         else:
-            hit_text = RouletteTexts.get_hit_text(user_name, ban_dur)
+            if target_type == ShootTarget.OPPONENT and shooter_id != victim_id:
+                hit_text = RouletteTexts.get_opponent_hit_text(shooter_name, victim_name, ban_dur)
+            else:
+                hit_text = RouletteTexts.get_hit_text(victim_name, ban_dur)
             result.narratives.append(hit_text)
+
             result.effects.append(ShootEffectResult(
-                target_id=uid,
-                target_name=user_name,
+                target_id=victim_id,
+                target_name=victim_name,
                 is_admin=False,
                 ban_seconds=ban_dur,
                 is_dead=True,
                 reason="中弹击倒"
             ))
-            Database.get_instance().record_user_action(uid, death=True, score_delta=-10)
+            Database.get_instance().record_user_action(victim_id, death=True, score_delta=-10)
 
-            if talent:
-                if talent.extortion:
-                    Database.get_instance().record_user_action(uid, coins_delta=100)
+            # 五五开·强行一换一
+            if victim_talent and victim_talent.fifty_fifty_kill and random.random() < 0.50:
+                co_victim_id = shooter_id if shooter_id != victim_id else self.loader_id
+                co_victim_name = shooter_name if shooter_id != victim_id else self.loader_name
+                if co_victim_id != victim_id:
+                    co_ban = self._calculate_ban_duration(None)
+                    trig = RouletteTexts.get_talent_trigger_text("fifty_fifty_kill", victim_name, co_victim_name)
+                    if trig:
+                        result.narratives.append(trig)
+                    result.effects.append(ShootEffectResult(
+                        target_id=co_victim_id,
+                        target_name=co_victim_name,
+                        is_admin=False,
+                        ban_seconds=co_ban,
+                        is_dead=True,
+                        reason="五五开一换一"
+                    ))
+
+
+            if victim_talent:
+                if victim_talent.extortion:
+                    Database.get_instance().record_user_action(victim_id, coins_delta=100)
                     Database.get_instance().record_user_action(self.loader_id, coins_delta=-100)
-                    trig = RouletteTexts.get_talent_trigger_text("extortionist", user_name, self.loader_name)
+                    trig = RouletteTexts.get_talent_trigger_text("extortionist", victim_name, self.loader_name)
                     if trig:
                         result.narratives.append(trig)
-                if talent.ban_reduction > 0:
-                    trig = RouletteTexts.get_talent_trigger_text("stubborn_mouth", user_name)
+                if victim_talent.ban_reduction > 0:
+                    trig = RouletteTexts.get_talent_trigger_text("stubborn_mouth", victim_name)
                     if trig:
                         result.narratives.append(trig)
-                if talent.suicide_aoe:
-                    sub = self._get_random_other_player([uid])
+                if victim_talent.suicide_aoe:
+                    sub = self._get_random_other_player([victim_id])
                     if sub:
                         s_id, s_name = sub
                         extra_ban = self._calculate_ban_duration(None)
-                        trig = RouletteTexts.get_talent_trigger_text("nuclear_boom", user_name, s_name)
+                        trig = RouletteTexts.get_talent_trigger_text("nuclear_boom", victim_name, s_name)
                         if trig:
                             result.narratives.append(trig)
                         result.effects.append(ShootEffectResult(
@@ -391,11 +491,11 @@ class RouletteSession:
 
         # 武器特效：大狙穿透 / RPG AOE
         if self.weapon_spec.type == WeaponType.SNIPER and random.random() < self.weapon_spec.pierce_chance:
-            sub = self._get_random_other_player([uid])
+            sub = self._get_random_other_player([victim_id, shooter_id]) or self._get_random_other_player([victim_id])
             if sub:
                 s_id, s_name = sub
                 pierce_ban = self._calculate_ban_duration(None)
-                pierce_text = RouletteTexts.get_sniper_pierce_text(user_name, s_name)
+                pierce_text = RouletteTexts.get_sniper_pierce_text(victim_name, s_name)
                 result.narratives.append(pierce_text)
                 result.effects.append(ShootEffectResult(
                     target_id=s_id,
@@ -407,11 +507,11 @@ class RouletteSession:
                 ))
 
         elif self.weapon_spec.type == WeaponType.RPG and random.random() < self.weapon_spec.aoe_splash_chance:
-            sub = self._get_random_other_player([uid])
+            sub = self._get_random_other_player([victim_id, shooter_id]) or self._get_random_other_player([victim_id])
             if sub:
                 s_id, s_name = sub
                 rpg_ban = self._calculate_ban_duration(None)
-                rpg_text = RouletteTexts.get_rpg_aoe_text(user_name, s_name)
+                rpg_text = RouletteTexts.get_rpg_aoe_text(victim_name, s_name)
                 result.narratives.append(rpg_text)
                 result.effects.append(ShootEffectResult(
                     target_id=s_id,
@@ -422,5 +522,6 @@ class RouletteSession:
                     is_blown_up=True,
                     reason="RPG冲击波波及"
                 ))
+
 
 
