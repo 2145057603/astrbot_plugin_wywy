@@ -189,6 +189,11 @@ class Main(Star):
             yield event.plain_result("⚠️ 轮盘赌仅支持在群聊中进行！")
             return
 
+        g_cfg = self.db.get_group_settings(group_id, self.plugin_config.default_mode)
+        if not g_cfg.enabled:
+            yield event.plain_result("⛔ 本群娱乐小游戏已被管理员关闭。发送【/群开关 开启】可重新启用。")
+            return
+
         uid, uname = self._get_user_info(event)
         is_admin = await self._check_is_admin(event, group_id, uid)
 
@@ -216,8 +221,7 @@ class Main(Star):
             else:
                 bullet_count = random.randint(weapon_spec.default_min_bullets, weapon_spec.default_max_bullets)
 
-            current_mode_str = self.db.get_group_mode(group_id, self.plugin_config.default_mode)
-            game_mode = GameMode.TALENT if current_mode_str == "talent" else GameMode.CLASSIC
+            game_mode = GameMode.TALENT if g_cfg.mode == "talent" else GameMode.CLASSIC
 
             session = RouletteSession(
                 group_id=group_id,
@@ -246,6 +250,11 @@ class Main(Star):
         group_id = self._get_group_id(event)
         if not group_id:
             yield event.plain_result("⚠️ 轮盘赌仅支持在群聊中进行！")
+            return
+
+        g_cfg = self.db.get_group_settings(group_id, self.plugin_config.default_mode)
+        if not g_cfg.enabled:
+            yield event.plain_result("⛔ 本群娱乐小游戏已被管理员关闭。发送【/群开关 开启】可重新启用。")
             return
 
         uid, uname = self._get_user_info(event)
@@ -287,12 +296,16 @@ class Main(Star):
             yield event.plain_result("⚠️ 仅支持在群聊中使用！")
             return
 
+        g_cfg = self.db.get_group_settings(group_id, self.plugin_config.default_mode)
+        if not g_cfg.enabled:
+            yield event.plain_result("⛔ 本群娱乐小游戏已被管理员关闭。")
+            return
+
         uid, uname = self._get_user_info(event)
         async with self.game_mgr.get_lock(group_id):
             session: Optional[RouletteSession] = self.game_mgr.get_game(group_id)
             if not session:
-                current_mode_str = self.db.get_group_mode(group_id, self.plugin_config.default_mode)
-                if current_mode_str != "talent":
+                if g_cfg.mode != "talent":
                     yield event.plain_result("⚠️ 当前群为【普通模式】，发送【/轮盘模式 能力】可切换为能力大乱斗模式！")
                 else:
                     yield event.plain_result("⚠️ 当前还没有装填开局！发送【/装填】开始游戏后即可抽取命格！")
@@ -300,6 +313,7 @@ class Main(Star):
 
             success, msg = session.draw_talent(uid, uname)
             yield event.plain_result(msg)
+
 
     async def _do_mode(self, event: AstrMessageEvent, target_mode: str = ""):
         group_id = self._get_group_id(event)
@@ -396,10 +410,14 @@ class Main(Star):
             "【🌟 异能命格指令】\n"
             "• /抽能力 (或: 逆天改命/觉醒) —— 在能力模式下抽取专属神技命格\n"
             "\n"
-            "【⚙️ 管理员配置指令】\n"
-            "• /轮盘模式 [普通/能力] —— 持久切换或查询当前群生效的轮盘模式\n"
-            "• /走火开 —— 开启群聊消息随机被动走火功能\n"
-            "• /走火关 —— 关闭群聊消息随机被动走火功能\n"
+            "【⚙️ 群独立管理员指令】\n"
+            "• /群管理 (或: /群配置) —— 查看本群当前生效的全部独立参数\n"
+            "• /群开关 开启/关闭 —— 控制本群全部娱乐功能启停\n"
+            "• /轮盘模式 普通/能力 —— 持久切换本群轮盘玩法模式\n"
+            "• /群禁言 60 300 —— 自定义本群实弹中弹禁言区间\n"
+            "• /群道具 开启/关闭 —— 控制本群战场突发空投道具\n"
+            "• /强制结束 (或: /重置轮盘) —— 强制清空本群卡住的对局\n"
+            "• /走火开 或 /走火关 —— 控制本群被动随机走火功能\n"
             "\n"
             "【🎪 综合娱乐指令】\n"
             "• /娱乐 —— 打开小型娱乐中心游戏菜单\n"
@@ -407,6 +425,7 @@ class Main(Star):
             "━━━━━━━━━━━━━━━━━━━━"
         )
         yield event.plain_result(msg)
+
 
     async def _do_help(self, event: AstrMessageEvent):
         msg = (
@@ -429,6 +448,109 @@ class Main(Star):
         )
         yield event.plain_result(msg)
 
+
+    async def _do_group_admin(self, event: AstrMessageEvent):
+        group_id = self._get_group_id(event)
+        if not group_id:
+            yield event.plain_result("⚠️ 仅支持在群聊中使用！")
+            return
+        g_cfg = self.db.get_group_settings(group_id, self.plugin_config.default_mode)
+        status_switch = "🟢 开启中" if g_cfg.enabled else "🔴 已关闭"
+        mode_str = "🌟 能力大乱斗模式" if g_cfg.mode == "talent" else "🎲 普通经典模式"
+        misfire_str = "🟢 开启" if g_cfg.misfire_enabled else "🔴 关闭"
+        items_str = "🟢 启用" if g_cfg.items_enabled else "🔴 禁用"
+        msg = (
+            f"⚙️ 〓 本群专属娱乐管理看板 〓\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"【群 号】: {group_id}\n"
+            f"【娱乐开关】: {status_switch}\n"
+            f"【轮盘模式】: {mode_str}\n"
+            f"【禁言区间】: {g_cfg.min_ban}秒 ~ {g_cfg.max_ban}秒\n"
+            f"【战术空投】: {items_str}\n"
+            f"【被动走火】: {misfire_str}\n"
+            f"【基础闪避】: {int(g_cfg.dodge_rate * 100)}%\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"💡 管理员专属配置指令：\n"
+            f"• /群开关 开启/关闭 —— 控制本群功能启停\n"
+            f"• /轮盘模式 普通/能力 —— 切换本群玩法模式\n"
+            f"• /群禁言 60 300 —— 自定义本群禁言区间\n"
+            f"• /群道具 开启/关闭 —— 控制空投战术道具\n"
+            f"• /走火开 或 /走火关 —— 控制群聊被动走火\n"
+            f"• /强制结束 —— 强制解散当前卡住的对局"
+        )
+        yield event.plain_result(msg)
+
+    async def _do_group_switch(self, event: AstrMessageEvent, status_str: str = ""):
+        group_id = self._get_group_id(event)
+        if not group_id:
+            yield event.plain_result("⚠️ 仅支持在群聊中使用！")
+            return
+        uid, uname = self._get_user_info(event)
+        if not await self._check_is_admin(event, group_id, uid):
+            yield event.plain_result("⚠️ 只有群管理员才能调整本群娱乐功能开关哦！")
+            return
+        target = status_str.strip()
+        if any(k in target for k in ["开", "开启", "on", "enable", "true"]):
+            self.db.update_group_settings(group_id, enabled=True)
+            yield event.plain_result("✅ 本群娱乐小游戏功能已【开启】！")
+        elif any(k in target for k in ["关", "关闭", "off", "disable", "false"]):
+            self.db.update_group_settings(group_id, enabled=False)
+            self.game_mgr.remove_game(group_id)
+            yield event.plain_result("⛔ 本群娱乐小游戏功能已【关闭】。正在进行的对局已自动清空。")
+        else:
+            yield event.plain_result("⚠️ 请使用：【/群开关 开启】或【/群开关 关闭】")
+
+    async def _do_group_ban_config(self, event: AstrMessageEvent, min_str: str = "", max_str: str = ""):
+        group_id = self._get_group_id(event)
+        if not group_id:
+            yield event.plain_result("⚠️ 仅支持在群聊中使用！")
+            return
+        uid, uname = self._get_user_info(event)
+        if not await self._check_is_admin(event, group_id, uid):
+            yield event.plain_result("⚠️ 只有群管理员才能配置本群禁言时长！")
+            return
+        if not min_str.isdigit():
+            yield event.plain_result("⚠️ 请提供有效的禁言秒数！格式：【/群禁言 60 300】（最小秒 最大秒）")
+            return
+        min_sec = int(min_str)
+        max_sec = int(max_str) if max_str.isdigit() else min_sec
+        if min_sec > max_sec:
+            min_sec, max_sec = max_sec, min_sec
+        min_sec = max(10, min_sec)
+        max_sec = max(min_sec, max_sec)
+        self.db.update_group_settings(group_id, min_ban=min_sec, max_ban=max_sec)
+        yield event.plain_result(f"✅ 本群轮盘实弹中弹基础禁言时长已设置为：{min_sec}秒 ~ {max_sec}秒！设置已持久保存。")
+
+    async def _do_group_items_switch(self, event: AstrMessageEvent, status_str: str = ""):
+        group_id = self._get_group_id(event)
+        if not group_id:
+            yield event.plain_result("⚠️ 仅支持在群聊中使用！")
+            return
+        uid, uname = self._get_user_info(event)
+        if not await self._check_is_admin(event, group_id, uid):
+            yield event.plain_result("⚠️ 只有群管理员才能调整战场战术道具开关！")
+            return
+        target = status_str.strip()
+        if any(k in target for k in ["开", "开启", "on", "enable", "true"]):
+            self.db.update_group_settings(group_id, items_enabled=True)
+            yield event.plain_result("✅ 本群【战场突发道具（粘弹/烟雾/闪光）】已【启用】！")
+        elif any(k in target for k in ["关", "关闭", "off", "disable", "false"]):
+            self.db.update_group_settings(group_id, items_enabled=False)
+            yield event.plain_result("🛡️ 本群【战场突发道具】已【禁用】。")
+        else:
+            yield event.plain_result("⚠️ 请使用：【/群道具 开启】或【/群道具 关闭】")
+
+    async def _do_force_reset(self, event: AstrMessageEvent):
+        group_id = self._get_group_id(event)
+        if not group_id:
+            yield event.plain_result("⚠️ 仅支持在群聊中使用！")
+            return
+        uid, uname = self._get_user_info(event)
+        if not await self._check_is_admin(event, group_id, uid):
+            yield event.plain_result("⚠️ 只有群管理员才能强制结束对局！")
+            return
+        self.game_mgr.remove_game(group_id)
+        yield event.plain_result("🧹 本群轮盘对局已强制解散并重置！")
 
     # ========== 独立指令注册（符合官方规范） ==========
 
@@ -552,6 +674,66 @@ class Main(Star):
             return
         self.db.set_group_misfire(group_id, False)
         yield event.plain_result("🛡️ 随机走火功能已【关闭】。")
+
+    @filter.command("群管理")
+    async def cmd_group_admin(self, event: AstrMessageEvent):
+        async for r in self._do_group_admin(event):
+            yield r
+
+    @filter.command("群配置")
+    async def cmd_group_admin_alias1(self, event: AstrMessageEvent):
+        async for r in self._do_group_admin(event):
+            yield r
+
+    @filter.command("娱乐设置")
+    async def cmd_group_admin_alias2(self, event: AstrMessageEvent):
+        async for r in self._do_group_admin(event):
+            yield r
+
+    @filter.command("群开关")
+    async def cmd_group_switch(self, event: AstrMessageEvent, status: str = ""):
+        async for r in self._do_group_switch(event, status):
+            yield r
+
+    @filter.command("娱乐开关")
+    async def cmd_group_switch_alias(self, event: AstrMessageEvent, status: str = ""):
+        async for r in self._do_group_switch(event, status):
+            yield r
+
+    @filter.command("群禁言")
+    async def cmd_group_ban(self, event: AstrMessageEvent, min_sec: str = "", max_sec: str = ""):
+        async for r in self._do_group_ban_config(event, min_sec, max_sec):
+            yield r
+
+    @filter.command("轮盘禁言")
+    async def cmd_group_ban_alias(self, event: AstrMessageEvent, min_sec: str = "", max_sec: str = ""):
+        async for r in self._do_group_ban_config(event, min_sec, max_sec):
+            yield r
+
+    @filter.command("群道具")
+    async def cmd_group_items(self, event: AstrMessageEvent, status: str = ""):
+        async for r in self._do_group_items_switch(event, status):
+            yield r
+
+    @filter.command("道具开关")
+    async def cmd_group_items_alias(self, event: AstrMessageEvent, status: str = ""):
+        async for r in self._do_group_items_switch(event, status):
+            yield r
+
+    @filter.command("强制结束")
+    async def cmd_force_reset(self, event: AstrMessageEvent):
+        async for r in self._do_force_reset(event):
+            yield r
+
+    @filter.command("重置轮盘")
+    async def cmd_force_reset_alias1(self, event: AstrMessageEvent):
+        async for r in self._do_force_reset(event):
+            yield r
+
+    @filter.command("清空轮盘")
+    async def cmd_force_reset_alias2(self, event: AstrMessageEvent):
+        async for r in self._do_force_reset(event):
+            yield r
 
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def on_group_message(self, event: AstrMessageEvent):

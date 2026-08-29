@@ -110,12 +110,17 @@ class RouletteSession:
             return self.chambers[self.current_chamber_idx]
         return None
 
+    def _get_group_settings(self):
+        return Database.get_instance().get_group_settings(self.group_id)
+
     def _calculate_ban_duration(self, talent: Optional[Talent]) -> int:
-        base_ban = random.randint(self.config.min_ban_seconds, self.config.max_ban_seconds)
+        g_cfg = self._get_group_settings()
+        base_ban = random.randint(g_cfg.min_ban, g_cfg.max_ban)
         ban = int(base_ban * self.weapon_spec.ban_multiplier)
         if talent and talent.ban_reduction > 0:
             ban = int(ban * (1.0 - talent.ban_reduction))
         return max(10, ban)
+
 
     def _get_random_other_player(self, exclude_ids: List[str]) -> Optional[Tuple[str, str]]:
         candidates = [p for p in self.recent_players if p[0] not in exclude_ids]
@@ -190,7 +195,8 @@ class RouletteSession:
             self._handle_sticky_bomb(uid, user_name, is_admin, result)
 
         # 随机突发战场道具空投
-        if self.sticky_bomb is None:
+        g_cfg = self._get_group_settings()
+        if self.sticky_bomb is None and g_cfg.items_enabled:
             dropped_item = TacticalItemManager.roll_airdrop(self.config.item_trigger_rate)
             if dropped_item == TacticalItemType.STICKY_BOMB:
                 self.sticky_bomb = TacticalItemManager.init_sticky_bomb(uid, user_name)
@@ -204,6 +210,7 @@ class RouletteSession:
                 self.blinded_users.add(uid)
                 drop_text = RouletteTexts.get_tactical_drop_text(TacticalItemType.FLASHBANG, user_name)
                 result.narratives.append(drop_text)
+
 
         result.next_bullet_peek = self.peek_next_bullet(uid)
         self.last_shooter = (uid, user_name)
@@ -303,11 +310,13 @@ class RouletteSession:
             return
 
         # 4. 闪避率判定
-        dodge_rate = self.config.default_dodge_rate
+        g_cfg = self._get_group_settings()
+        dodge_rate = g_cfg.dodge_rate
         if uid in self.blinded_users:
             dodge_rate = 0.0
         elif talent:
             dodge_rate += talent.dodge_bonus
+
 
         if dodge_rate > 0 and random.random() < dodge_rate:
             dodge_text = RouletteTexts.get_dodge_text(user_name)
