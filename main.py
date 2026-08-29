@@ -36,32 +36,86 @@ class Main(Star):
         self.game_mgr = GameManager.get_instance()
 
     def _get_group_id(self, event: AstrMessageEvent) -> Optional[str]:
-        """获取群ID，私聊则返回 None"""
-        gid = event.get_group_id()
-        return str(gid) if gid else None
+        """安全获取群ID，私聊则返回 None"""
+        try:
+            gid = event.get_group_id()
+            return str(gid) if gid else None
+        except Exception:
+            return None
 
     def _get_user_info(self, event: AstrMessageEvent) -> tuple[str, str, bool]:
-        """获取用户 ID、昵称、是否为管理员"""
-        uid = str(event.get_sender_id())
-        uname = event.get_sender_name() or uid
-        role = getattr(event.message_obj.sender, "role", "") or ""
-        is_admin = role in ["admin", "owner", "administrator"] or uid == str(getattr(self.context, "admin_id", ""))
+        """安全获取用户 ID、昵称、是否为管理员（全协议容错兼容）"""
+        try:
+            uid = str(event.get_sender_id() or "")
+        except Exception:
+            uid = "unknown"
+
+        try:
+            uname = str(event.get_sender_name() or uid)
+        except Exception:
+            uname = uid
+
+        is_admin = False
+        try:
+            sender_obj = getattr(getattr(event, "message_obj", None), "sender", None)
+            role = str(getattr(sender_obj, "role", "") or "").lower()
+            is_admin = role in ["admin", "owner", "administrator"]
+        except Exception:
+            pass
+
+        try:
+            admin_id = str(getattr(self.context, "admin_id", "") or "")
+            if admin_id and uid == admin_id:
+                is_admin = True
+        except Exception:
+            pass
+
         return uid, uname, is_admin
 
     async def _try_ban_user(self, event: AstrMessageEvent, group_id: str, user_id: str, duration: int):
-        """尝试禁言用户（兼容 OneBot v11 等主流协议）"""
+        """尝试禁言用户（全平台多协议适配：OneBot v11、NapCat、Lagrange、QQ官方等）"""
         if duration <= 0:
             return
+
+        # 尝试转数字类型（若为纯数字QQ号）
         try:
-            bot = getattr(event, "bot", None)
-            if bot and hasattr(bot, "set_group_ban"):
-                await bot.set_group_ban(group_id=int(group_id), user_id=int(user_id), duration=duration)
-            elif bot and hasattr(bot, "api") and hasattr(bot.api, "set_group_ban"):
-                await bot.api.set_group_ban(group_id=int(group_id), user_id=int(user_id), duration=duration)
-            elif hasattr(event, "call_api"):
-                await event.call_api("set_group_ban", group_id=int(group_id), user_id=int(user_id), duration=duration)
-        except Exception as e:
-            logger.warning(f"[无欲物语] 禁言用户 {user_id} 失败（可能是Bot无管理权限或协议不支持）: {e}")
+            g_val = int(group_id) if group_id.isdigit() else group_id
+            u_val = int(user_id) if user_id.isdigit() else user_id
+        except Exception:
+            g_val, u_val = group_id, user_id
+
+        # 1. 尝试 bot client 的直接调用
+        bot = getattr(event, "bot", None)
+        if bot:
+            for method_name in ["set_group_ban", "group_ban", "mute_member"]:
+                if hasattr(bot, method_name):
+                    try:
+                        func = getattr(bot, method_name)
+                        await func(group_id=g_val, user_id=u_val, duration=duration)
+                        return
+                    except Exception:
+                        pass
+
+            # 2. 尝试 bot.api
+            bot_api = getattr(bot, "api", None)
+            if bot_api:
+                for method_name in ["set_group_ban", "group_ban", "mute_member"]:
+                    if hasattr(bot_api, method_name):
+                        try:
+                            func = getattr(bot_api, method_name)
+                            await func(group_id=g_val, user_id=u_val, duration=duration)
+                            return
+                        except Exception:
+                            pass
+
+        # 3. 尝试 event.call_api
+        if hasattr(event, "call_api"):
+            try:
+                await event.call_api("set_group_ban", group_id=g_val, user_id=u_val, duration=duration)
+                return
+            except Exception as e:
+                logger.warning(f"[无欲物语] call_api 禁言用户 {user_id} 提示: {e}")
+
 
     async def _handle_timeout_callback(self, group_id: str):
         """轮盘超时清理回调"""

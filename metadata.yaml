@@ -1,6 +1,9 @@
 name: astrbot_plugin_wywy
+display_name: 无欲物语
 version: 1.0.0
 author: 无欲物语
 desc: 小型娱乐综合体，内置魔改高能军火轮盘赌、Roguelike命格异能抽奖、战场突发战术道具与海量热梗文案！
-repo: "https://github.com/2145057603/astrbot_plugin_wywy"
+help: 发送 /娱乐 查看娱乐菜单，发送 /帮助中心 查看完整指令清单
+repo: https://github.com/2145057603/astrbot_plugin_wywy
+
 

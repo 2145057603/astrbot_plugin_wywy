@@ -3,41 +3,45 @@
     "type": "string",
     "description": "新群默认轮盘模式 (classic: 普通模式 / talent: 能力模式)",
     "default": "classic",
-    "enum": ["classic", "talent"]
+    "options": [
+      "classic",
+      "talent"
+    ]
   },
   "default_dodge_rate": {
-    "type": "number",
+    "type": "float",
     "description": "普通模式下默认命运闪避概率 (0.0 - 1.0)",
     "default": 0.05
   },
   "timeout_seconds": {
-    "type": "integer",
+    "type": "int",
     "description": "轮盘游戏超时自动结束时间（秒）",
     "default": 300
   },
   "item_trigger_rate": {
-    "type": "number",
+    "type": "float",
     "description": "每次开枪后机器人随机空投突发战术道具（粘弹/烟雾/闪光）的概率 (0.0 - 1.0)",
     "default": 0.15
   },
   "min_ban_seconds": {
-    "type": "integer",
+    "type": "int",
     "description": "左轮普通实弹中弹最小禁言秒数",
     "default": 60
   },
   "max_ban_seconds": {
-    "type": "integer",
+    "type": "int",
     "description": "左轮普通实弹中弹最大禁言秒数",
     "default": 180
   },
   "enable_misfire": {
-    "type": "boolean",
+    "type": "bool",
     "description": "是否开启群聊随机走火功能",
     "default": false
   },
   "misfire_probability": {
-    "type": "number",
+    "type": "float",
     "description": "群聊消息被动走火概率 (0.0 - 0.05)",
     "default": 0.003
   }
 }
+
