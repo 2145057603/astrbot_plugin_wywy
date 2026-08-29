@@ -72,6 +72,23 @@ class RouletteTexts:
         "💥 砰！【{user}】瞄准【{target}】扣下击锤，火光四射！【{target} 饮恨西北，被禁言 {duration} 秒】",
         "💥 🎯 绝杀！【{user}】这一枪直接送走了【{target}】！【小黑屋一日游 {duration} 秒】"
     ]
+    # 2.3 【向对面开枪·未命中·反噬自罚一枪】台词
+    COUNTER_PENALTY_HIT_TEXTS: List[str] = [
+        "⚠️ 决斗反噬！【{user}】射击【{target}】击发击空，触发决斗自罚规则！\n💥 砰！枪声炸响！【{user}】自罚吃下实弹，偷鸡不成蚀把米！【小黑屋禁言 {duration} 秒】",
+        "⚠️ 决斗反弹！【{user}】未能命中【{target}】，自罚一枪——💥 轰！当场玩火自焚！【禁言 {duration} 秒】",
+        "⚠️ 猎人成了猎物！【{user}】空枪失误，被迫向自己扣动扳机——💥 砰！花生米下肚，直接抬走！【禁言 {duration} 秒】",
+        "⚠️ 偷鸡失败！【{user}】枪口没能击中【{target}】，自罚一发——💥 砰！自己给自己表演了大变活人！【禁言 {duration} 秒】",
+        "⚠️ 杀敌未成身先死！【{user}】未中目标自罚一枪，不幸命中自己！【送入ICU禁言 {duration} 秒】"
+    ]
+
+    COUNTER_PENALTY_BLANK_TEXTS: List[str] = [
+        "⚠️ 决斗反噬！【{user}】未能命中【{target}】，必须向自己自罚一枪——🎲 咔哒！自罚也是空弹！【{user}】惊出一身冷汗！",
+        "⚠️ 虚惊一场！【{user}】空枪后自罚一击——🎲 咔哒！枪口冒青烟，再次死里逃生！",
+        "⚠️ 自罚判定！【{user}】被迫朝自己扣动扳机——🎲 咔哒！阳寿拉满，侥幸生还！",
+        "⚠️ 决斗自罚！【{user}】自扣一枪，击锤击空！心脏差点跳出嗓子眼！",
+        "⚠️ 命运眷顾！【{user}】自罚一发也是空枪，阎王爷直呼好家伙！"
+    ]
+
 
 
     # 3. 开枪·中弹倒地台词（8 种通用）
@@ -277,6 +294,14 @@ class RouletteTexts:
     @classmethod
     def get_opponent_hit_text(cls, user: str, target: str, duration: int) -> str:
         return random.choice(cls.OPPONENT_HIT_TEXTS).format(user=user, target=target, duration=duration)
+    @classmethod
+    def get_counter_penalty_hit_text(cls, user: str, target: str, duration: int) -> str:
+        return random.choice(cls.COUNTER_PENALTY_HIT_TEXTS).format(user=user, target=target, duration=duration)
+
+    @classmethod
+    def get_counter_penalty_blank_text(cls, user: str, target: str) -> str:
+        return random.choice(cls.COUNTER_PENALTY_BLANK_TEXTS).format(user=user, target=target)
+
 
     @classmethod
     def get_hit_text(cls, user: str, duration: int) -> str:
