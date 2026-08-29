@@ -14,7 +14,9 @@ try:
     from .games.roulette.models import GameMode, WeaponType, ShootTarget
     from .games.roulette.weapons import get_weapon_spec, WEAPON_SPECS
     from .games.roulette.engine import RouletteSession
+    from .games.roulette.duel import DuelManager, DuelInvitation, DuelSession
     from .games.roulette.texts import RouletteTexts
+    from .systems.leaderboard_renderer import LeaderboardRenderer
 except (ImportError, ValueError):
     from core.config import PluginConfig
     from core.database import Database
@@ -22,7 +24,10 @@ except (ImportError, ValueError):
     from games.roulette.models import GameMode, WeaponType, ShootTarget
     from games.roulette.weapons import get_weapon_spec, WEAPON_SPECS
     from games.roulette.engine import RouletteSession
+    from games.roulette.duel import DuelManager, DuelInvitation, DuelSession
     from games.roulette.texts import RouletteTexts
+    from systems.leaderboard_renderer import LeaderboardRenderer
+
 
 
 
@@ -35,6 +40,8 @@ class Main(Star):
         self.plugin_config = PluginConfig.from_dict(self.config_data)
         self.db = Database.get_instance()
         self.game_mgr = GameManager.get_instance()
+        self.duel_mgr = DuelManager.get_instance()
+
 
     def _get_group_id(self, event: AstrMessageEvent) -> Optional[str]:
         """安全获取群ID，私聊则返回 None"""
@@ -277,6 +284,29 @@ class Main(Star):
                 target_uid = param
             target_uname = param.replace("@", "").strip() or target_uid
 
+        # 1. 优先检查 1v1 决斗会话
+        duel = self.duel_mgr.get_duel(group_id)
+        if duel:
+            success, result, err_msg = duel.execute_turn(uid, uname, is_admin, target_type)
+            if not success:
+                yield event.plain_result(err_msg)
+                return
+
+            for effect in result.effects:
+                if effect.is_dead and effect.ban_seconds > 0 and not effect.is_admin:
+                    await self._try_ban_user(event, group_id, effect.target_id, effect.ban_seconds)
+
+            narrative_block = "\n\n".join(result.narratives)
+            status_line = f"📊 膛室剩余: {result.remaining_bullets}/{result.remaining_chambers}"
+            turn_tip = f"\n👉 下一行动回合：【{duel.p1[1] if duel.current_turn == duel.p1[0] else duel.p2[1]}】（请发送 /向对面开枪 或 /向自己开枪）" if not duel.game_over else ""
+
+            final_msg = f"{narrative_block}\n\n{status_line}{turn_tip}"
+            if duel.game_over:
+                self.duel_mgr.remove_duel(group_id)
+
+            yield event.plain_result(final_msg)
+            return
+
         async with self.game_mgr.get_lock(group_id):
             session: Optional[RouletteSession] = self.game_mgr.get_game(group_id)
             if not session:
@@ -292,6 +322,7 @@ class Main(Star):
                 target_user_id=target_uid,
                 target_user_name=target_uname
             )
+
 
             for effect in result.effects:
                 if effect.is_dead and effect.ban_seconds > 0 and not effect.is_admin:
@@ -575,6 +606,126 @@ class Main(Star):
         self.game_mgr.remove_game(group_id)
         yield event.plain_result("🧹 本群轮盘对局已强制解散并重置！")
 
+    async def _do_duel_challenge(self, event: AstrMessageEvent, target_str: str = "", weapon_str: str = ""):
+        group_id = self._get_group_id(event)
+        if not group_id:
+            yield event.plain_result("⚠️ 决斗仅支持在群聊中发起！")
+            return
+
+        g_cfg = self.db.get_group_settings(group_id, self.plugin_config.default_mode)
+        if not g_cfg.enabled:
+            yield event.plain_result("⛔ 本群娱乐小游戏已被管理员关闭。")
+            return
+
+        uid, uname = self._get_user_info(event)
+
+        if self.duel_mgr.get_duel(group_id) or self.game_mgr.get_game(group_id):
+            yield event.plain_result("⚠️ 当前群内已有对决正在进行中，请等待本局结束！")
+            return
+
+        target_uid = None
+        for comp in getattr(getattr(event, "message_obj", None), "message", []):
+            if getattr(comp, "type", "") == "At" or comp.__class__.__name__ == "At":
+                target_uid = str(getattr(comp, "qq", "") or getattr(comp, "target", "") or "")
+        if not target_uid and target_str.isdigit():
+            target_uid = target_str
+
+        if not target_uid or target_uid == uid:
+            yield event.plain_result("⚠️ 请使用【/决斗 @某人 [武器]】指定你想挑战的对手！不能挑战自己哦！")
+            return
+
+        target_name = target_str.replace("@", "").strip() or f"玩家{target_uid}"
+        weapon_spec = get_weapon_spec(weapon_str or "左轮")
+
+        inv = self.duel_mgr.create_invitation(
+            group_id=group_id,
+            challenger_id=uid,
+            challenger_name=uname,
+            target_id=target_uid,
+            target_name=target_name,
+            weapon_spec=weapon_spec
+        )
+
+        msg = (
+            f"⚔️ 〓 生死决斗发起通知 〓\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"👤 发起人：【{uname}】\n"
+            f"🎯 被挑战人：【{target_name}】\n"
+            f"🔫 决斗武器：{weapon_spec.icon} {weapon_spec.name}\n"
+            f"⏳ 响应时限：60 秒\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"👉 请【{target_name}】发送【/接受决斗】应战，或发送【/拒绝决斗】弃权！"
+        )
+        yield event.plain_result(msg)
+
+    async def _do_duel_accept(self, event: AstrMessageEvent):
+        group_id = self._get_group_id(event)
+        if not group_id:
+            yield event.plain_result("⚠️ 仅支持在群聊中使用！")
+            return
+
+        uid, uname = self._get_user_info(event)
+        inv = self.duel_mgr.get_invitation(group_id)
+        if not inv:
+            yield event.plain_result("⚠️ 当前群内没有待接受的决斗邀请或邀请已过期！")
+            return
+
+        if inv.target_id != uid:
+            yield event.plain_result(f"⚠️ 这场决斗是向【{inv.target_name}】发起的，你不能代为接受哦！")
+            return
+
+        duel = self.duel_mgr.start_duel(inv, self.plugin_config)
+        msg = (
+            f"🔥 〓 决斗正式开启 · 生死看淡 〓\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"⚔️ 决斗双方：【{duel.p1[1]}】 VS 【{duel.p2[1]}】\n"
+            f"🎯 选定武器：{duel.weapon_spec.icon} {duel.weapon_spec.name}\n"
+            f"🎲 先手行动：【{duel.p1[1]}】\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"💡 规则提示：\n"
+            f"1. 发送【/向自己开枪】—— 空弹获得【再动】连击，实弹自爆！\n"
+            f"2. 发送【/向对面开枪】—— 实弹淘汰对手，空弹触发【反噬自罚一枪】！\n"
+            f"👉 请【{duel.p1[1]}】开始你的回合！"
+        )
+        yield event.plain_result(msg)
+
+    async def _do_duel_reject(self, event: AstrMessageEvent):
+        group_id = self._get_group_id(event)
+        if not group_id:
+            yield event.plain_result("⚠️ 仅支持在群聊中使用！")
+            return
+
+        uid, uname = self._get_user_info(event)
+        inv = self.duel_mgr.get_invitation(group_id)
+        if not inv:
+            yield event.plain_result("⚠️ 当前群内没有待处理的决斗邀请！")
+            return
+
+        if inv.target_id != uid and inv.challenger_id != uid:
+            yield event.plain_result("⚠️ 你不是本场决斗的参与者！")
+            return
+
+        self.duel_mgr.remove_invitation(group_id)
+        yield event.plain_result(f"🏳️ 【{uname}】取消/拒绝了本次决斗邀请，硝烟散去。")
+
+    async def _do_leaderboard(self, event: AstrMessageEvent, rank_type_str: str = ""):
+        group_id = self._get_group_id(event)
+        r_type = (rank_type_str or "ban_time").strip().lower()
+        if any(k in r_type for k in ["幸运", "阳寿", "lucky", "dodge"]):
+            key = "lucky"
+        elif any(k in r_type for k in ["中弹", "亡魂", "death", "dead"]):
+            key = "deaths"
+        elif any(k in r_type for k in ["胜场", "战神", "duel", "win"]):
+            key = "duel"
+        elif any(k in r_type for k in ["财富", "首富", "coin", "wealth", "钱"]):
+            key = "coins"
+        else:
+            key = "ban_time"
+
+        items = self.db.get_leaderboard(rank_type=key, limit=10)
+        img_path = LeaderboardRenderer.render_leaderboard_image(key, items, group_id or "")
+        yield event.image_result(img_path)
+
     # ========== 独立指令注册（符合官方规范） ==========
 
     @filter.command("装填")
@@ -792,6 +943,115 @@ class Main(Star):
     @filter.command("清空轮盘")
     async def cmd_force_reset_alias2(self, event: AstrMessageEvent):
         async for r in self._do_force_reset(event):
+            yield r
+
+    # ========== 决斗指令注册 ==========
+
+    @filter.command("决斗")
+    async def cmd_duel(self, event: AstrMessageEvent, target: str = "", weapon: str = ""):
+        async for r in self._do_duel_challenge(event, target, weapon):
+            yield r
+
+    @filter.command("发起决斗")
+    async def cmd_duel_alias1(self, event: AstrMessageEvent, target: str = "", weapon: str = ""):
+        async for r in self._do_duel_challenge(event, target, weapon):
+            yield r
+
+    @filter.command("挑战")
+    async def cmd_duel_alias2(self, event: AstrMessageEvent, target: str = "", weapon: str = ""):
+        async for r in self._do_duel_challenge(event, target, weapon):
+            yield r
+
+    @filter.command("接受决斗")
+    async def cmd_duel_accept(self, event: AstrMessageEvent):
+        async for r in self._do_duel_accept(event):
+            yield r
+
+    @filter.command("应战")
+    async def cmd_duel_accept_alias1(self, event: AstrMessageEvent):
+        async for r in self._do_duel_accept(event):
+            yield r
+
+    @filter.command("接战")
+    async def cmd_duel_accept_alias2(self, event: AstrMessageEvent):
+        async for r in self._do_duel_accept(event):
+            yield r
+
+    @filter.command("拒绝决斗")
+    async def cmd_duel_reject(self, event: AstrMessageEvent):
+        async for r in self._do_duel_reject(event):
+            yield r
+
+    @filter.command("拒战")
+    async def cmd_duel_reject_alias(self, event: AstrMessageEvent):
+        async for r in self._do_duel_reject(event):
+            yield r
+
+    # ========== 排行榜指令注册（输出高清渲染图片） ==========
+
+    @filter.command("轮盘排行")
+    async def cmd_rank(self, event: AstrMessageEvent, rank_type: str = ""):
+        async for r in self._do_leaderboard(event, rank_type):
+            yield r
+
+    @filter.command("排行榜")
+    async def cmd_rank_alias1(self, event: AstrMessageEvent, rank_type: str = ""):
+        async for r in self._do_leaderboard(event, rank_type):
+            yield r
+
+    @filter.command("娱乐排行")
+    async def cmd_rank_alias2(self, event: AstrMessageEvent, rank_type: str = ""):
+        async for r in self._do_leaderboard(event, rank_type):
+            yield r
+
+    @filter.command("受害者榜")
+    async def cmd_rank_ban(self, event: AstrMessageEvent):
+        async for r in self._do_leaderboard(event, "ban_time"):
+            yield r
+
+    @filter.command("惩罚排行")
+    async def cmd_rank_ban_alias(self, event: AstrMessageEvent):
+        async for r in self._do_leaderboard(event, "ban_time"):
+            yield r
+
+    @filter.command("幸运榜")
+    async def cmd_rank_lucky(self, event: AstrMessageEvent):
+        async for r in self._do_leaderboard(event, "lucky"):
+            yield r
+
+    @filter.command("阳寿排行")
+    async def cmd_rank_lucky_alias(self, event: AstrMessageEvent):
+        async for r in self._do_leaderboard(event, "lucky"):
+            yield r
+
+    @filter.command("中弹榜")
+    async def cmd_rank_death(self, event: AstrMessageEvent):
+        async for r in self._do_leaderboard(event, "deaths"):
+            yield r
+
+    @filter.command("亡魂排行")
+    async def cmd_rank_death_alias(self, event: AstrMessageEvent):
+        async for r in self._do_leaderboard(event, "deaths"):
+            yield r
+
+    @filter.command("胜场榜")
+    async def cmd_rank_duel(self, event: AstrMessageEvent):
+        async for r in self._do_leaderboard(event, "duel"):
+            yield r
+
+    @filter.command("战神榜")
+    async def cmd_rank_duel_alias(self, event: AstrMessageEvent):
+        async for r in self._do_leaderboard(event, "duel"):
+            yield r
+
+    @filter.command("首富榜")
+    async def cmd_rank_coins(self, event: AstrMessageEvent):
+        async for r in self._do_leaderboard(event, "coins"):
+            yield r
+
+    @filter.command("财富榜")
+    async def cmd_rank_coins_alias(self, event: AstrMessageEvent):
+        async for r in self._do_leaderboard(event, "coins"):
             yield r
 
     @filter.event_message_type(filter.EventMessageType.ALL)

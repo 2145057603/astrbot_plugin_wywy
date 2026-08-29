@@ -116,27 +116,37 @@ class Database:
     def record_user_action(
         self,
         user_id: str,
+        nickname: Optional[str] = None,
         shot: bool = False,
         death: bool = False,
         dodge: bool = False,
         survive: bool = False,
+        ban_seconds: int = 0,
+        duel_win: bool = False,
+        duel_loss: bool = False,
         coins_delta: int = 0,
         score_delta: int = 0
     ):
-        """记录用户轮盘战绩与经济"""
+        """记录用户全维度轮盘战绩、惩罚时长与经济"""
         uid = str(user_id)
         if "user_stats" not in self._data:
             self._data["user_stats"] = {}
         if uid not in self._data["user_stats"]:
             self._data["user_stats"][uid] = {
+                "nickname": nickname or uid,
                 "shots": 0,
                 "deaths": 0,
                 "dodges": 0,
                 "survives": 0,
+                "ban_seconds": 0,
+                "duel_wins": 0,
+                "duel_losses": 0,
                 "coins": 100,
                 "score": 0
             }
         stat = self._data["user_stats"][uid]
+        if nickname:
+            stat["nickname"] = nickname
         if shot:
             stat["shots"] += 1
         if death:
@@ -145,6 +155,12 @@ class Database:
             stat["dodges"] += 1
         if survive:
             stat["survives"] += 1
+        if ban_seconds > 0:
+            stat["ban_seconds"] = stat.get("ban_seconds", 0) + ban_seconds
+        if duel_win:
+            stat["duel_wins"] = stat.get("duel_wins", 0) + 1
+        if duel_loss:
+            stat["duel_losses"] = stat.get("duel_losses", 0) + 1
         stat["coins"] = max(0, stat.get("coins", 0) + coins_delta)
         stat["score"] = stat.get("score", 0) + score_delta
         self._save()
@@ -152,11 +168,47 @@ class Database:
     def get_user_stats(self, user_id: str) -> Dict[str, Any]:
         uid = str(user_id)
         return self._data.get("user_stats", {}).get(uid, {
+            "nickname": uid,
             "shots": 0,
             "deaths": 0,
             "dodges": 0,
             "survives": 0,
+            "ban_seconds": 0,
+            "duel_wins": 0,
+            "duel_losses": 0,
             "coins": 100,
             "score": 0
         })
+
+    def get_leaderboard(self, rank_type: str = "ban_time", limit: int = 10) -> list[Dict[str, Any]]:
+        """获取多维度排行榜数据
+        rank_type 可选:
+          - ban_time: 惩罚时间排行（受害者榜）
+          - lucky: 幸运排行（闪避/阳寿榜）
+          - deaths: 中弹排行（亡魂榜）
+          - duel: 决斗胜场排行（战神榜）
+          - coins: 财富排行（首富榜）
+        """
+        all_users = self._data.get("user_stats", {})
+        items = []
+        for uid, stat in all_users.items():
+            entry = dict(stat)
+            entry["user_id"] = uid
+            items.append(entry)
+
+        if rank_type in ["ban_time", "punish", "ban", "惩罚"]:
+            items.sort(key=lambda x: x.get("ban_seconds", 0), reverse=True)
+        elif rank_type in ["lucky", "dodge", "幸运", "阳寿"]:
+            items.sort(key=lambda x: (x.get("dodges", 0), x.get("survives", 0)), reverse=True)
+        elif rank_type in ["deaths", "dead", "中弹", "亡魂"]:
+            items.sort(key=lambda x: x.get("deaths", 0), reverse=True)
+        elif rank_type in ["duel", "wins", "胜场", "战神"]:
+            items.sort(key=lambda x: (x.get("duel_wins", 0), x.get("score", 0)), reverse=True)
+        elif rank_type in ["coins", "wealth", "财富", "首富"]:
+            items.sort(key=lambda x: x.get("coins", 0), reverse=True)
+        else:
+            items.sort(key=lambda x: x.get("score", 0), reverse=True)
+
+        return items[:limit]
+
 
