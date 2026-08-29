@@ -122,11 +122,9 @@ class Main(Star):
         self.game_mgr.remove_game(group_id)
         logger.info(f"[无欲物语] 群 {group_id} 轮盘赌超时已自动解散。")
 
-    @filter.command("装填")
-    @filter.command("装弹")
-    async def cmd_load(self, event: AstrMessageEvent, weapon_or_count: str = "", count_str: str = ""):
+    # ========== 核心业务处理方法 ==========
 
-        """装填武器开局：/装填 [左轮/大狙/加特林/火箭筒] [实弹数]"""
+    async def _do_load(self, event: AstrMessageEvent, weapon_or_count: str = "", count_str: str = ""):
         group_id = self._get_group_id(event)
         if not group_id:
             yield event.plain_result("⚠️ 轮盘赌仅支持在群聊中进行！")
@@ -138,7 +136,6 @@ class Main(Star):
                 yield event.plain_result("⚠️ 当前群内已经有一场激烈的对决正在进行中了！请发送【/开枪】扣动扳机，或发送【/轮盘状态】查看对局！")
                 return
 
-            # 解析武器与实弹数
             weapon_input = weapon_or_count
             custom_count = None
 
@@ -150,7 +147,6 @@ class Main(Star):
 
             weapon_spec = get_weapon_spec(weapon_input)
 
-            # 确定实弹数量
             if custom_count is not None:
                 if not is_admin:
                     yield event.plain_result("⚠️ 只有群管理员才能指定自定义实弹数量哦！普通玩家随机装填！")
@@ -159,11 +155,9 @@ class Main(Star):
             else:
                 bullet_count = random.randint(weapon_spec.default_min_bullets, weapon_spec.default_max_bullets)
 
-            # 获取群持久化模式
             current_mode_str = self.db.get_group_mode(group_id, self.plugin_config.default_mode)
             game_mode = GameMode.TALENT if current_mode_str == "talent" else GameMode.CLASSIC
 
-            # 创建对局
             session = RouletteSession(
                 group_id=group_id,
                 loader_id=uid,
@@ -176,7 +170,6 @@ class Main(Star):
             self.game_mgr.set_game(group_id, session)
             self.game_mgr.schedule_timeout(group_id, self.plugin_config.timeout_seconds, self._handle_timeout_callback)
 
-            # 渲染装填战报
             load_text = RouletteTexts.get_load_text(weapon_spec.type, uname, bullet_count, weapon_spec.max_chambers)
             mode_desc = "🌟【能力大乱斗模式】（发送 /抽能力 觉醒本局神技）" if game_mode == GameMode.TALENT else "🎲【普通经典模式】（自带5%命运闪避）"
 
@@ -188,13 +181,7 @@ class Main(Star):
             )
             yield event.plain_result(reply_msg)
 
-    @filter.command("开枪")
-    @filter.command("扣动扳机")
-    @filter.command("碰")
-    @filter.command("开火")
-    async def cmd_shoot(self, event: AstrMessageEvent):
-
-        """扣动扳机参与对决"""
+    async def _do_shoot(self, event: AstrMessageEvent):
         group_id = self._get_group_id(event)
         if not group_id:
             yield event.plain_result("⚠️ 轮盘赌仅支持在群聊中进行！")
@@ -207,24 +194,18 @@ class Main(Star):
                 yield event.plain_result("⚠️ 当前群内没有正在进行的对局！发送【/装填】装上子弹开始一场生死对决吧！")
                 return
 
-            # 重置超时
             self.game_mgr.schedule_timeout(group_id, self.plugin_config.timeout_seconds, self._handle_timeout_callback)
-
-            # 执行开枪
             result = session.execute_shoot(uid, uname, is_admin)
 
-            # 执行禁言惩罚
             for effect in result.effects:
                 if effect.is_dead and effect.ban_seconds > 0 and not effect.is_admin:
                     await self._try_ban_user(event, group_id, effect.target_id, effect.ban_seconds)
 
-            # 透视眼提示
             extra_notes = []
             if result.next_bullet_peek is not None:
                 peek_desc = "💀【极度危险·实弹在膛】" if result.next_bullet_peek else "🍀【虚惊一场·下发是空弹】"
                 extra_notes.append(f"👁️ 曼波透视眼暗号：{peek_desc}")
 
-            # 汇总文案
             narrative_block = "\n\n".join(result.narratives)
             status_line = f"📊 膛室剩余: {result.remaining_bullets}/{result.remaining_chambers}"
 
@@ -232,18 +213,12 @@ class Main(Star):
             if extra_notes:
                 final_msg += "\n" + "\n".join(extra_notes)
 
-            # 如果游戏结束，清理对局
             if result.game_over:
                 self.game_mgr.remove_game(group_id)
 
             yield event.plain_result(final_msg)
 
-    @filter.command("抽能力")
-    @filter.command("逆天改命")
-    @filter.command("觉醒")
-    async def cmd_talent(self, event: AstrMessageEvent):
-
-        """在能力大乱斗模式下抽取本局专属命格"""
+    async def _do_talent(self, event: AstrMessageEvent):
         group_id = self._get_group_id(event)
         if not group_id:
             yield event.plain_result("⚠️ 仅支持在群聊中使用！")
@@ -253,7 +228,6 @@ class Main(Star):
         async with self.game_mgr.get_lock(group_id):
             session: Optional[RouletteSession] = self.game_mgr.get_game(group_id)
             if not session:
-                # 若当前未开局，提示当前群模式
                 current_mode_str = self.db.get_group_mode(group_id, self.plugin_config.default_mode)
                 if current_mode_str != "talent":
                     yield event.plain_result("⚠️ 当前群为【普通模式】，发送【/轮盘模式 能力】可切换为能力大乱斗模式！")
@@ -264,9 +238,8 @@ class Main(Star):
             success, msg = session.draw_talent(uid, uname)
             yield event.plain_result(msg)
 
-    @filter.command("轮盘模式")
-    async def cmd_mode(self, event: AstrMessageEvent, target_mode: str = ""):
-        """切换或查询群轮盘模式：/轮盘模式 [普通/能力]"""
+
+    async def _do_mode(self, event: AstrMessageEvent, target_mode: str = ""):
         group_id = self._get_group_id(event)
         if not group_id:
             yield event.plain_result("⚠️ 仅支持在群聊中使用！")
@@ -276,7 +249,6 @@ class Main(Star):
         target = target_mode.strip()
 
         if not target:
-            # 查询当前模式
             curr = self.db.get_group_mode(group_id, self.plugin_config.default_mode)
             curr_name = "🌟【能力大乱斗模式】" if curr == "talent" else "🎲【普通经典模式】"
             yield event.plain_result(
@@ -298,11 +270,7 @@ class Main(Star):
         else:
             yield event.plain_result("⚠️ 模式参数不正确！请使用：【/轮盘模式 普通】 或 【/轮盘模式 能力】")
 
-    @filter.command("轮盘状态")
-    @filter.command("看枪")
-    async def cmd_status(self, event: AstrMessageEvent):
-
-        """查看当前对局状态"""
+    async def _do_status(self, event: AstrMessageEvent):
         group_id = self._get_group_id(event)
         if not group_id:
             yield event.plain_result("⚠️ 仅支持在群聊中使用！")
@@ -331,10 +299,7 @@ class Main(Star):
         )
         yield event.plain_result(msg)
 
-    @filter.command("娱乐")
-    @filter.command("小型娱乐")
-    async def cmd_entertainment(self, event: AstrMessageEvent):
-        """查看小型娱乐中心与可用小游戏列表"""
+    async def _do_entertainment(self, event: AstrMessageEvent):
         msg = (
             "🎮 〓 无欲物语 · 小型娱乐中心 〓\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
@@ -354,11 +319,7 @@ class Main(Star):
         )
         yield event.plain_result(msg)
 
-    @filter.command("帮助中心")
-    @filter.command("娱乐帮助")
-    @filter.command("所有指令")
-    async def cmd_help_center(self, event: AstrMessageEvent):
-        """查看无欲物语全部指令清单"""
+    async def _do_help_center(self, event: AstrMessageEvent):
         msg = (
             "📖 〓 无欲物语 · 帮助中心 〓\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
@@ -383,11 +344,7 @@ class Main(Star):
         )
         yield event.plain_result(msg)
 
-    @filter.command("轮盘帮助")
-    @filter.command("无欲物语")
-    async def cmd_help(self, event: AstrMessageEvent):
-
-        """查看无欲物语轮盘说明书"""
+    async def _do_help(self, event: AstrMessageEvent):
         msg = (
             "🔫 〓 无欲物语 · 军火轮盘决斗说明书 〓\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
@@ -407,6 +364,104 @@ class Main(Star):
             "⚠️ 提示：同一时间每个群只允许开启一场对决，300秒无操作自动解散。"
         )
         yield event.plain_result(msg)
+
+
+    # ========== 独立指令注册（符合官方规范） ==========
+
+    @filter.command("装填")
+    async def cmd_load(self, event: AstrMessageEvent, weapon_or_count: str = "", count_str: str = ""):
+        async for r in self._do_load(event, weapon_or_count, count_str):
+            yield r
+
+    @filter.command("装弹")
+    async def cmd_load_alias(self, event: AstrMessageEvent, weapon_or_count: str = "", count_str: str = ""):
+        async for r in self._do_load(event, weapon_or_count, count_str):
+            yield r
+
+    @filter.command("开枪")
+    async def cmd_shoot(self, event: AstrMessageEvent):
+        async for r in self._do_shoot(event):
+            yield r
+
+    @filter.command("扣动扳机")
+    async def cmd_shoot_alias1(self, event: AstrMessageEvent):
+        async for r in self._do_shoot(event):
+            yield r
+
+    @filter.command("碰")
+    async def cmd_shoot_alias2(self, event: AstrMessageEvent):
+        async for r in self._do_shoot(event):
+            yield r
+
+    @filter.command("开火")
+    async def cmd_shoot_alias3(self, event: AstrMessageEvent):
+        async for r in self._do_shoot(event):
+            yield r
+
+    @filter.command("抽能力")
+    async def cmd_talent(self, event: AstrMessageEvent):
+        async for r in self._do_talent(event):
+            yield r
+
+    @filter.command("逆天改命")
+    async def cmd_talent_alias1(self, event: AstrMessageEvent):
+        async for r in self._do_talent(event):
+            yield r
+
+    @filter.command("觉醒")
+    async def cmd_talent_alias2(self, event: AstrMessageEvent):
+        async for r in self._do_talent(event):
+            yield r
+
+    @filter.command("轮盘模式")
+    async def cmd_mode(self, event: AstrMessageEvent, target_mode: str = ""):
+        async for r in self._do_mode(event, target_mode):
+            yield r
+
+    @filter.command("轮盘状态")
+    async def cmd_status(self, event: AstrMessageEvent):
+        async for r in self._do_status(event):
+            yield r
+
+    @filter.command("看枪")
+    async def cmd_status_alias(self, event: AstrMessageEvent):
+        async for r in self._do_status(event):
+            yield r
+
+    @filter.command("娱乐")
+    async def cmd_entertainment(self, event: AstrMessageEvent):
+        async for r in self._do_entertainment(event):
+            yield r
+
+    @filter.command("小型娱乐")
+    async def cmd_entertainment_alias(self, event: AstrMessageEvent):
+        async for r in self._do_entertainment(event):
+            yield r
+
+    @filter.command("帮助中心")
+    async def cmd_help_center(self, event: AstrMessageEvent):
+        async for r in self._do_help_center(event):
+            yield r
+
+    @filter.command("娱乐帮助")
+    async def cmd_help_center_alias1(self, event: AstrMessageEvent):
+        async for r in self._do_help_center(event):
+            yield r
+
+    @filter.command("所有指令")
+    async def cmd_help_center_alias2(self, event: AstrMessageEvent):
+        async for r in self._do_help_center(event):
+            yield r
+
+    @filter.command("轮盘帮助")
+    async def cmd_help(self, event: AstrMessageEvent):
+        async for r in self._do_help(event):
+            yield r
+
+    @filter.command("无欲物语")
+    async def cmd_help_alias(self, event: AstrMessageEvent):
+        async for r in self._do_help(event):
+            yield r
 
     @filter.command("走火开")
     async def cmd_misfire_on(self, event: AstrMessageEvent):
@@ -434,18 +489,13 @@ class Main(Star):
 
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def on_group_message(self, event: AstrMessageEvent):
-        """被动监听群聊消息（随机走火）"""
+        """被动监听群聊消息（支持被动走火与自然语言兜底）"""
         group_id = self._get_group_id(event)
         if not group_id:
             return
 
-        # 检查是否开启走火
         is_misfire_on = self.db.get_group_misfire(group_id, self.plugin_config.enable_misfire)
-        if not is_misfire_on:
-            return
-
-        # 走火概率判定
-        if random.random() < self.plugin_config.misfire_probability:
+        if is_misfire_on and random.random() < self.plugin_config.misfire_probability:
             uid, uname, is_admin = self._get_user_info(event)
             ban_dur = random.randint(self.plugin_config.min_ban_seconds, self.plugin_config.max_ban_seconds)
             misfire_text = RouletteTexts.get_misfire_text(uname, ban_dur)
@@ -454,4 +504,5 @@ class Main(Star):
             else:
                 misfire_text += "\n" + RouletteTexts.get_admin_immunity_text(uname)
             yield event.plain_result(misfire_text)
+
 
