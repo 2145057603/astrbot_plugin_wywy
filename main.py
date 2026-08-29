@@ -43,8 +43,8 @@ class Main(Star):
         except Exception:
             return None
 
-    def _get_user_info(self, event: AstrMessageEvent) -> tuple[str, str, bool]:
-        """安全获取用户 ID、昵称、是否为管理员（全协议容错兼容）"""
+    def _get_user_info(self, event: AstrMessageEvent) -> tuple[str, str]:
+        """安全获取用户 ID、昵称"""
         try:
             uid = str(event.get_sender_id() or "")
         except Exception:
@@ -55,22 +55,81 @@ class Main(Star):
         except Exception:
             uname = uid
 
-        is_admin = False
+        return uid, uname
+
+    async def _check_is_admin(self, event: AstrMessageEvent, group_id: str, user_id: str) -> bool:
+        """全平台、多维度管理员与群主权限鉴定"""
+        # 1. 优先调用 AstrBot 原生角色提取方法
+        try:
+            if hasattr(event, "get_sender_role"):
+                r = str(event.get_sender_role() or "").lower()
+                if r in ["admin", "owner", "administrator"]:
+                    return True
+            if hasattr(event, "get_role"):
+                r = str(event.get_role() or "").lower()
+                if r in ["admin", "owner", "administrator"]:
+                    return True
+            if hasattr(event, "is_admin"):
+                val = event.is_admin
+                if callable(val):
+                    val = val()
+                if asyncio.iscoroutine(val):
+                    val = await val
+                if val:
+                    return True
+        except Exception:
+            pass
+
+        # 2. 检查 message_obj.sender 属性
         try:
             sender_obj = getattr(getattr(event, "message_obj", None), "sender", None)
-            role = str(getattr(sender_obj, "role", "") or "").lower()
-            is_admin = role in ["admin", "owner", "administrator"]
+            if sender_obj:
+                role = str(getattr(sender_obj, "role", "") or "").lower()
+                if role in ["admin", "owner", "administrator"]:
+                    return True
         except Exception:
             pass
 
+        # 3. 检查 raw_event 原始消息体
+        try:
+            raw = getattr(event, "raw_message", None) or getattr(event, "message_obj", None)
+            if hasattr(event, "get_raw_event"):
+                raw_evt = event.get_raw_event()
+                if isinstance(raw_evt, dict):
+                    sender_dict = raw_evt.get("sender", {})
+                    r = str(sender_dict.get("role", "")).lower()
+                    if r in ["admin", "owner", "administrator"]:
+                        return True
+        except Exception:
+            pass
+
+        # 4. 检查 AstrBot 全局超管配置
         try:
             admin_id = str(getattr(self.context, "admin_id", "") or "")
-            if admin_id and uid == admin_id:
-                is_admin = True
+            if admin_id and str(user_id) == admin_id:
+                return True
+            if hasattr(self.context, "is_admin") and callable(self.context.is_admin):
+                if self.context.is_admin(user_id):
+                    return True
         except Exception:
             pass
 
-        return uid, uname, is_admin
+        # 5. 主动向 Bot 查询群成员真实身份（权威兜底）
+        try:
+            bot = getattr(event, "bot", None)
+            if bot and hasattr(bot, "get_group_member_info"):
+                g_val = int(group_id) if group_id.isdigit() else group_id
+                u_val = int(user_id) if user_id.isdigit() else user_id
+                info = await bot.get_group_member_info(group_id=g_val, user_id=u_val, no_cache=False)
+                if isinstance(info, dict):
+                    r = str(info.get("role", "")).lower()
+                    if r in ["admin", "owner", "administrator"]:
+                        return True
+        except Exception:
+            pass
+
+        return False
+
 
     async def _try_ban_user(self, event: AstrMessageEvent, group_id: str, user_id: str, duration: int):
         """尝试禁言用户（全平台多协议适配：OneBot v11、NapCat、Lagrange、QQ官方等）"""
@@ -130,7 +189,9 @@ class Main(Star):
             yield event.plain_result("⚠️ 轮盘赌仅支持在群聊中进行！")
             return
 
-        uid, uname, is_admin = self._get_user_info(event)
+        uid, uname = self._get_user_info(event)
+        is_admin = await self._check_is_admin(event, group_id, uid)
+
         async with self.game_mgr.get_lock(group_id):
             if self.game_mgr.get_game(group_id):
                 yield event.plain_result("⚠️ 当前群内已经有一场激烈的对决正在进行中了！请发送【/开枪】扣动扳机，或发送【/轮盘状态】查看对局！")
@@ -187,7 +248,9 @@ class Main(Star):
             yield event.plain_result("⚠️ 轮盘赌仅支持在群聊中进行！")
             return
 
-        uid, uname, is_admin = self._get_user_info(event)
+        uid, uname = self._get_user_info(event)
+        is_admin = await self._check_is_admin(event, group_id, uid)
+
         async with self.game_mgr.get_lock(group_id):
             session: Optional[RouletteSession] = self.game_mgr.get_game(group_id)
             if not session:
@@ -224,7 +287,7 @@ class Main(Star):
             yield event.plain_result("⚠️ 仅支持在群聊中使用！")
             return
 
-        uid, uname, _ = self._get_user_info(event)
+        uid, uname = self._get_user_info(event)
         async with self.game_mgr.get_lock(group_id):
             session: Optional[RouletteSession] = self.game_mgr.get_game(group_id)
             if not session:
@@ -238,14 +301,14 @@ class Main(Star):
             success, msg = session.draw_talent(uid, uname)
             yield event.plain_result(msg)
 
-
     async def _do_mode(self, event: AstrMessageEvent, target_mode: str = ""):
         group_id = self._get_group_id(event)
         if not group_id:
             yield event.plain_result("⚠️ 仅支持在群聊中使用！")
             return
 
-        uid, uname, is_admin = self._get_user_info(event)
+        uid, uname = self._get_user_info(event)
+        is_admin = await self._check_is_admin(event, group_id, uid)
         target = target_mode.strip()
 
         if not target:
@@ -259,6 +322,7 @@ class Main(Star):
 
         if not is_admin:
             yield event.plain_result("⚠️ 只有群管理员才能切换群轮盘模式哦！")
+
             return
 
         if any(k in target for k in ["能力", "异能", "talent"]):
@@ -468,7 +532,8 @@ class Main(Star):
         group_id = self._get_group_id(event)
         if not group_id:
             return
-        _, _, is_admin = self._get_user_info(event)
+        uid, uname = self._get_user_info(event)
+        is_admin = await self._check_is_admin(event, group_id, uid)
         if not is_admin:
             yield event.plain_result("⚠️ 只有管理员才能开启随机走火功能！")
             return
@@ -480,7 +545,8 @@ class Main(Star):
         group_id = self._get_group_id(event)
         if not group_id:
             return
-        _, _, is_admin = self._get_user_info(event)
+        uid, uname = self._get_user_info(event)
+        is_admin = await self._check_is_admin(event, group_id, uid)
         if not is_admin:
             yield event.plain_result("⚠️ 只有管理员才能关闭随机走火功能！")
             return
@@ -496,7 +562,8 @@ class Main(Star):
 
         is_misfire_on = self.db.get_group_misfire(group_id, self.plugin_config.enable_misfire)
         if is_misfire_on and random.random() < self.plugin_config.misfire_probability:
-            uid, uname, is_admin = self._get_user_info(event)
+            uid, uname = self._get_user_info(event)
+            is_admin = await self._check_is_admin(event, group_id, uid)
             ban_dur = random.randint(self.plugin_config.min_ban_seconds, self.plugin_config.max_ban_seconds)
             misfire_text = RouletteTexts.get_misfire_text(uname, ban_dur)
             if not is_admin:
@@ -504,5 +571,6 @@ class Main(Star):
             else:
                 misfire_text += "\n" + RouletteTexts.get_admin_immunity_text(uname)
             yield event.plain_result(misfire_text)
+
 
 
