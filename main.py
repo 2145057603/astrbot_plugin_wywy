@@ -269,20 +269,30 @@ class Main(Star):
         is_admin = await self._check_is_admin(event, group_id, uid)
 
         # 解析开枪目标
-        target_type = force_target_type or ShootTarget.OPPONENT
         target_uid = None
         target_uname = None
-
         param = target_param.strip()
-        if any(k in param for k in ["自己", "self", "me", "自瞄"]):
+        is_devil = False
+
+        for comp in getattr(getattr(event, "message_obj", None), "message", []):
+            if getattr(comp, "type", "") == "At" or comp.__class__.__name__ == "At":
+                target_uid = str(getattr(comp, "qq", "") or getattr(comp, "target", "") or "")
+        if not target_uid and param.isdigit():
+            target_uid = param
+        if target_uid:
+            target_uname = param.replace("@", "").strip() or f"玩家{target_uid}"
+
+        if force_target_type == ShootTarget.SELF or any(k in param for k in ["自己", "self", "me", "自瞄"]):
             target_type = ShootTarget.SELF
-        elif param:
-            for comp in getattr(getattr(event, "message_obj", None), "message", []):
-                if getattr(comp, "type", "") == "At" or comp.__class__.__name__ == "At":
-                    target_uid = str(getattr(comp, "qq", "") or getattr(comp, "target", "") or "")
-            if not target_uid and param.isdigit():
-                target_uid = param
-            target_uname = param.replace("@", "").strip() or target_uid
+            is_devil = True
+        elif force_target_type == ShootTarget.OPPONENT or target_uid:
+            target_type = ShootTarget.OPPONENT
+        else:
+            if self.duel_mgr.get_duel(group_id):
+                target_type = ShootTarget.OPPONENT
+            else:
+                target_type = ShootTarget.SELF
+                is_devil = False
 
         # 1. 优先检查 1v1 决斗会话
         duel = self.duel_mgr.get_duel(group_id)
@@ -320,8 +330,10 @@ class Main(Star):
                 is_admin=is_admin,
                 target_type=target_type,
                 target_user_id=target_uid,
-                target_user_name=target_uname
+                target_user_name=target_uname,
+                is_devil_self=is_devil
             )
+
 
 
             for effect in result.effects:

@@ -134,11 +134,12 @@ class RouletteSession:
         user_id: str,
         user_name: str,
         is_admin: bool = False,
-        target_type: ShootTarget = ShootTarget.OPPONENT,
+        target_type: ShootTarget = ShootTarget.SELF,
         target_user_id: Optional[str] = None,
-        target_user_name: Optional[str] = None
+        target_user_name: Optional[str] = None,
+        is_devil_self: bool = False
     ) -> ShootResult:
-        """执行开枪扣动扳机流程（支持向自己开枪自瞄再动 / 向对面决斗）"""
+        """执行开枪扣动扳机流程（默认对自己扣扳机承担风险；指定目标时向对手射击）"""
         uid = str(user_id)
         self.register_player(uid, user_name)
         shooter_talent = self.user_talents.get(uid)
@@ -156,7 +157,8 @@ class RouletteSession:
             else:
                 other = self._get_random_other_player([uid]) or self.last_shooter or (uid, user_name)
                 victim_id, victim_name = other
-            victim_is_admin = False  # 外部传入或在hit时判定
+            victim_is_admin = False
+
 
         result = ShootResult(
             user_id=uid,
@@ -191,10 +193,13 @@ class RouletteSession:
                 # ====== 空弹判定 ======
                 result.blanks_fired += 1
                 if target_type == ShootTarget.SELF:
-                    # 恶魔轮盘核心：朝自己开枪空弹，获得额外一回合再动开火权！
-                    result.extra_turn = True
-                    self.user_extra_turn = uid
-                    self_text = RouletteTexts.get_self_blank_text(user_name)
+                    if is_devil_self:
+                        # 恶魔轮盘自瞄：获得额外一回合再动开火权！
+                        result.extra_turn = True
+                        self_text = RouletteTexts.get_self_blank_text(user_name)
+                    else:
+                        # 标准群轮盘：自己扣动扳机空枪安全！
+                        self_text = RouletteTexts.get_blank_text(user_name)
                     result.narratives.append(self_text)
                 else:
                     if victim_id == uid:
@@ -226,6 +231,7 @@ class RouletteSession:
                                 result.blanks_fired += 1
                                 penalty_blank_text = RouletteTexts.get_counter_penalty_blank_text(user_name, victim_name)
                                 result.narratives.append(penalty_blank_text)
+
 
                 # 经济加成
                 if shooter_talent and shooter_talent.coin_multiplier > 1.0:
