@@ -1,10 +1,10 @@
-name: astrbot_plugin_wywy
+﻿name: astrbot_plugin_wywy
 display_name: 🎮 无欲物语
-version: 1.0.0
+version: 1.2.0
 author: 无欲物语
-desc: 小型娱乐综合体，内置魔改高能军火轮盘赌、Roguelike命格异能抽奖、战场突发战术道具与海量热梗文案！
-description: 小型娱乐综合体，内置魔改高能军火轮盘赌、Roguelike命格异能抽奖、战场突发战术道具与海量热梗文案！
-help: 发送 /娱乐 查看娱乐菜单，发送 /帮助中心 查看完整指令清单
+desc: 小型娱乐综合体，内置魔改高能军火轮盘赌、1v1生死决斗、多维度超清HTML排行榜、Roguelike命格异能抽奖、战场突发战术道具与海量热梗文案！
+description: 小型娱乐综合体，内置魔改高能军火轮盘赌、1v1生死决斗、多维度超清HTML排行榜、Roguelike命格异能抽奖、战场突发战术道具与海量热梗文案！
+help: 发送 /娱乐 查看娱乐菜单，发送 /帮助中心 查看完整指令清单，发送 /更新日志 查看版本变动
 repo: https://github.com/2145057603/astrbot_plugin_wywy
 astrbot_version: ">=3.5.0"
 support_platforms:
@@ -12,5 +12,3 @@ support_platforms:
   - nakuru
   - qq_official
   - qq_official_webhook
-
-
