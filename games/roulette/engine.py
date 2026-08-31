@@ -137,7 +137,8 @@ class RouletteSession:
         target_type: ShootTarget = ShootTarget.SELF,
         target_user_id: Optional[str] = None,
         target_user_name: Optional[str] = None,
-        is_devil_self: bool = False
+        is_devil_self: bool = False,
+        is_duel: bool = False
     ) -> ShootResult:
         """执行开枪扣动扳机流程（默认对自己扣扳机承担风险；指定目标时向对手射击）"""
         uid = str(user_id)
@@ -206,32 +207,34 @@ class RouletteSession:
                         blank_text = RouletteTexts.get_blank_text(user_name)
                         result.narratives.append(blank_text)
                     else:
-                        blank_text = f"🎲 咔哒！【{user_name}】瞄准【{victim_name}】扣动扳机——击发击空！未能击中目标！"
-                        result.narratives.append(blank_text)
-
-                        # 决斗规则：射击他人未命中，开枪者必须立即接受一发自罚子弹！
-                        if self.current_chamber_idx < len(self.chambers):
-                            penalty_is_live = self.chambers[self.current_chamber_idx]
-                            self.current_chamber_idx += 1
-                            result.shots_fired += 1
-                            if penalty_is_live:
-                                penalty_ban = self._calculate_ban_duration(shooter_talent)
-                                penalty_hit_text = RouletteTexts.get_counter_penalty_hit_text(user_name, victim_name, penalty_ban)
-                                result.narratives.append(penalty_hit_text)
-                                result.effects.append(ShootEffectResult(
-                                    target_id=uid,
-                                    target_name=user_name,
-                                    is_admin=is_admin,
-                                    ban_seconds=0 if is_admin else penalty_ban,
-                                    is_dead=True,
-                                    reason="决斗反噬自罚中弹"
-                                ))
-                                Database.get_instance().record_user_action(uid, death=True, score_delta=-10)
-                            else:
-                                result.blanks_fired += 1
-                                penalty_blank_text = RouletteTexts.get_counter_penalty_blank_text(user_name, victim_name)
-                                result.narratives.append(penalty_blank_text)
-
+                        if is_duel:
+                            blank_text = RouletteTexts.get_blank_text(victim_name)
+                            result.narratives.append(blank_text)
+                        else:
+                            blank_text = RouletteTexts.get_blank_text(victim_name)
+                            result.narratives.append(blank_text)
+                            if self.current_chamber_idx < len(self.chambers):
+                                penalty_is_live = self.chambers[self.current_chamber_idx]
+                                self.current_chamber_idx += 1
+                                result.shots_fired += 1
+                                if penalty_is_live:
+                                    penalty_ban = self._calculate_ban_duration(shooter_talent)
+                                    penalty_hit_text = RouletteTexts.get_counter_penalty_hit_text(user_name, victim_name, penalty_ban)
+                                    result.narratives.append(penalty_hit_text)
+                                    result.effects.append(ShootEffectResult(
+                                        target_id=uid,
+                                        target_name=user_name,
+                                        is_admin=is_admin,
+                                        ban_seconds=0 if is_admin else penalty_ban,
+                                        is_dead=True,
+                                        reason="决斗反噬自罚中弹"
+                                    ))
+                                    Database.get_instance().record_user_action(uid, death=True, score_delta=-10)
+                                else:
+                                    result.blanks_fired += 1
+                                    penalty_blank_text = RouletteTexts.get_counter_penalty_blank_text(user_name, victim_name)
+                                    result.narratives.append(penalty_blank_text)
+    
 
                 # 经济加成
                 if shooter_talent and shooter_talent.coin_multiplier > 1.0:

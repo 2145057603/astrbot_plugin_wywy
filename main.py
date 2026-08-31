@@ -686,6 +686,7 @@ class Main(Star):
             yield event.plain_result(f"⚠️ 这场决斗是向【{inv.target_name}】发起的，你不能代为接受哦！")
             return
 
+        inv.target_name = uname
         duel = self.duel_mgr.start_duel(inv, self.plugin_config)
         msg = (
             f"🔥 〓 决斗正式开启 · 生死看淡 〓\n"

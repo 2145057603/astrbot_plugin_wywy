@@ -97,7 +97,9 @@ class DuelSession:
             is_admin=is_admin,
             target_type=target_type,
             target_user_id=opp_id,
-            target_user_name=opp_name
+            target_user_name=opp_name,
+            is_devil_self=(target_type == ShootTarget.SELF),
+            is_duel=True
         )
 
         dead_effects = [e for e in result.effects if e.is_dead]
