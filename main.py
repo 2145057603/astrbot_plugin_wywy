@@ -749,8 +749,11 @@ class Main(Star):
             key = "ban_time"
 
         items = self.db.get_leaderboard(rank_type=key, limit=10)
-        img_path = LeaderboardRenderer.render_leaderboard_image(key, items, group_id or "")
-        yield event.image_result(img_path)
+        img_path = await LeaderboardRenderer.render_leaderboard_image(self.context, key, items, group_id or "")
+        if img_path:
+            yield event.image_result(img_path)
+        else:
+            yield event.plain_result("?? ??????????")
 
     # ========== 独立指令注册（符合官方规范） ==========
 
