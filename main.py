@@ -206,7 +206,7 @@ class Main(Star):
         is_admin = await self._check_is_admin(event, group_id, uid)
 
         async with self.game_mgr.get_lock(group_id):
-            if self.game_mgr.get_game(group_id):
+            if self.game_mgr.get_game(group_id) or self.duel_mgr.get_duel(group_id):
                 yield event.plain_result("⚠️ 当前群内已经有一场激烈的对决正在进行中了！请发送【/开枪】扣动扳机，或发送【/轮盘状态】查看对局！")
                 return
 
@@ -365,6 +365,17 @@ class Main(Star):
             return
 
         uid, uname = self._get_user_info(event)
+
+        # ???? 1v1 ??????????
+        duel = self.duel_mgr.get_duel(group_id)
+        if duel:
+            if not duel.is_participant(uid):
+                yield event.plain_result("?? ??????? 1v1 ????????????????????")
+                return
+            success, msg = duel.roulette.draw_talent(uid, uname)
+            yield event.plain_result(msg)
+            return
+
         async with self.game_mgr.get_lock(group_id):
             session: Optional[RouletteSession] = self.game_mgr.get_game(group_id)
             if not session:
@@ -562,6 +573,8 @@ class Main(Star):
         elif any(k in target for k in ["关", "关闭", "off", "disable", "false"]):
             self.db.update_group_settings(group_id, enabled=False)
             self.game_mgr.remove_game(group_id)
+            self.duel_mgr.remove_duel(group_id)
+            self.duel_mgr.remove_invitation(group_id)
             yield event.plain_result("⛔ 本群娱乐小游戏功能已【关闭】。正在进行的对局已自动清空。")
         else:
             yield event.plain_result("⚠️ 请使用：【/群开关 开启】或【/群开关 关闭】")
