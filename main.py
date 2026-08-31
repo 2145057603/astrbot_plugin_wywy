@@ -16,8 +16,10 @@ try:
     from .games.roulette.engine import RouletteSession
     from .games.roulette.duel import DuelManager, DuelInvitation, DuelSession
     from .games.roulette.texts import RouletteTexts
+    from .games.scratch import ScratchEngine, SCRATCH_TIERS
     from .systems.leaderboard_renderer import LeaderboardRenderer
 except (ImportError, ValueError):
+    from games.scratch import ScratchEngine, SCRATCH_TIERS
     from core.config import PluginConfig
     from core.database import Database
     from core.game_manager import GameManager
